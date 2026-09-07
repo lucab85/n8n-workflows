@@ -30,11 +30,18 @@ services:
       N8N_PORT: 5678
       WEBHOOK_URL: ${WEBHOOK_URL}
       GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Rome}
+      # n8n blocks {{ $env.X }} in node expressions by default — several
+      # workflows here rely on it (GITHUB_TOKEN, CLAUDE_BRIDGE_KEY, etc.).
+      # Safe for a single-owner instance; see README's claude-bridge section.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
       # Used directly via {{ $env.* }} inside selected workflows.
       APIFY_TOKEN: ${APIFY_TOKEN}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       PODCAST_WEBHOOK_TOKEN: ${PODCAST_WEBHOOK_TOKEN:-}
+      CONVERTKIT_API_SECRET: ${CONVERTKIT_API_SECRET}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      CLAUDE_BRIDGE_KEY: ${CLAUDE_BRIDGE_KEY}
     ports:
       - "${N8N_PORT_BINDING:-5678}:5678"
     volumes:

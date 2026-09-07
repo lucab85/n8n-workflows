@@ -89,6 +89,14 @@ n8n sarà su `http://localhost:5678` (o sull'host che hai messo in
 `N8N_HOST`/`N8N_PROTOCOL` dentro `.env`). Al primo accesso ti chiede di
 creare l'account owner.
 
+`N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"` è già nel `docker-compose.yml` —
+senza, molti di questi workflow falliscono con `access to env vars
+denied` appena provano a leggere `{{ $env.GITHUB_TOKEN }}` (o
+`CLAUDE_BRIDGE_KEY`, `APIFY_TOKEN`, ecc.) in un nodo HTTP Request: n8n
+blocca `$env` nelle espressioni per default, pensato per istanze
+multi-tenant. Sicuro da disattivare su un'istanza personale a
+proprietario singolo come questa.
+
 ### Importare i workflow
 
 ```bash
