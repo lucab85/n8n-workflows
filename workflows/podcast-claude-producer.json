@@ -1,0 +1,143 @@
+{
+  "id": "1df4459b-384f-4835-a1be-f379e7b3474f",
+  "name": "Podcast AI Production Pack — Claude",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "podcast-ai-producer",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "4e5acb79-3f10-4768-a3b4-3717620d5f5d",
+      "name": "Webhook: Podcast source",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        220,
+        380
+      ],
+      "webhookId": "a3417028-6090-4ff1-9271-c8ccba230068",
+      "notes": "POST source_url + transcript. Optional metadata: episode_title, episode_number, guest, audience, language, cta, brand_notes."
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\nconst headers = input.headers || {};\n\nconst expectedToken = $env.PODCAST_WEBHOOK_TOKEN || '';\nconst suppliedToken = headers['x-podcast-token'] || headers['X-Podcast-Token'] || body.token || '';\nif (expectedToken && suppliedToken !== expectedToken) {\n  throw new Error('Unauthorized: invalid x-podcast-token');\n}\n\nconst sourceUrl = String(body.source_url || '').trim();\nconst transcript = String(body.transcript || '').trim();\n\nif (!sourceUrl) {\n  throw new Error('source_url is required');\n}\nif (transcript.length < 50) {\n  throw new Error('transcript is required and must contain at least 50 characters');\n}\n\nreturn [{\n  json: {\n    source_url: sourceUrl,\n    transcript: transcript.slice(0, 180000),\n    episode_title: String(body.episode_title || '').trim(),\n    episode_number: String(body.episode_number || '').trim(),\n    guest: String(body.guest || '').trim(),\n    audience: String(body.audience || 'technical leaders, builders, and practitioners interested in AI').trim(),\n    language: String(body.language || 'English').trim(),\n    cta: String(body.cta || '').trim(),\n    brand_notes: String(body.brand_notes || '').trim(),\n    requested_by: String(body.requested_by || '').trim(),\n    generated_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "75c71194-0525-46d8-8a51-6a37e279a933",
+      "name": "Normalize request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'claude-sonnet-5',\n  max_tokens: 6000,\n  system: \"You are a senior podcast producer, video editor, and distribution strategist. Turn a raw podcast transcript into a practical production pack that a human editor and content team can use immediately.\\n\\nBe specific, concise, and commercially useful. Never invent facts, quotes, timestamps, guests, products, or claims that are not supported by the transcript or supplied metadata. If the transcript does not contain timestamps, set timestamp fields to null rather than guessing. Preserve the requested language for public-facing copy.\\n\\nReturn JSON only. Do not wrap the JSON in markdown fences and do not add any preamble or commentary outside the JSON.\",\n  messages: [{\n    role: 'user',\n    content:\n      '<metadata>\\n' +\n      'Source URL: ' + $json.source_url + '\\n' +\n      'Episode title: ' + ($json.episode_title || '(not supplied)') + '\\n' +\n      'Episode number: ' + ($json.episode_number || '(not supplied)') + '\\n' +\n      'Guest: ' + ($json.guest || '(not supplied)') + '\\n' +\n      'Audience: ' + $json.audience + '\\n' +\n      'Language: ' + $json.language + '\\n' +\n      'CTA: ' + ($json.cta || '(none supplied)') + '\\n' +\n      'Brand notes: ' + ($json.brand_notes || '(none supplied)') + '\\n' +\n      '</metadata>\\n\\n' +\n      '<transcript>\\n' + $json.transcript + '\\n</transcript>\\n\\n' +\n      '<task>\\nCreate the production pack described below.\\n\\nReturn exactly one JSON object with this shape:\\n\\n{\\n  \"episode\": {\\n    \"working_title\": \"string\",\\n    \"one_sentence_promise\": \"string\",\\n    \"target_viewer\": \"string\",\\n    \"core_takeaways\": [\"string\"],\\n    \"cold_open\": {\\n      \"timestamp_start\": \"string|null\",\\n      \"timestamp_end\": \"string|null\",\\n      \"quote_or_summary\": \"string\",\\n      \"why_it_works\": \"string\"\\n    }\\n  },\\n  \"edit_brief\": {\\n    \"remove_or_tighten\": [\\n      {\\n        \"timestamp_start\": \"string|null\",\\n        \"timestamp_end\": \"string|null\",\\n        \"instruction\": \"string\",\\n        \"reason\": \"string\"\\n      }\\n    ],\\n    \"b_roll_and_graphics\": [\\n      {\\n        \"timestamp\": \"string|null\",\\n        \"visual\": \"string\",\\n        \"on_screen_text\": \"string\"\\n      }\\n    ],\\n    \"audio_notes\": [\"string\"],\\n    \"pacing_notes\": [\"string\"]\\n  },\\n  \"chapters\": [\\n    {\\n      \"timestamp\": \"string|null\",\\n      \"title\": \"string\"\\n    }\\n  ],\\n  \"shorts\": [\\n    {\\n      \"rank\": 1,\\n      \"timestamp_start\": \"string|null\",\\n      \"timestamp_end\": \"string|null\",\\n      \"hook\": \"string\",\\n      \"clip_summary\": \"string\",\\n      \"caption\": \"string\",\\n      \"on_screen_title\": \"string\"\\n    }\\n  ],\\n  \"youtube\": {\\n    \"title_options\": [\"string\"],\\n    \"description\": \"string\",\\n    \"tags\": [\"string\"],\\n    \"pinned_comment\": \"string\"\\n  },\\n  \"thumbnail\": {\\n    \"concepts\": [\\n      {\\n        \"concept\": \"string\",\\n        \"headline\": \"string\",\\n        \"visual_direction\": \"string\"\\n      }\\n    ]\\n  },\\n  \"social\": {\\n    \"linkedin_post\": \"string\",\\n    \"x_posts\": [\"string\"]\\n  },\\n  \"newsletter\": {\\n    \"subject_options\": [\"string\"],\\n    \"preview_text\": \"string\",\\n    \"body\": \"string\"\\n  },\\n  \"editor_handoff\": {\\n    \"priority_notes\": [\"string\"],\\n    \"assets_needed\": [\"string\"],\\n    \"quality_checklist\": [\"string\"]\\n  }\\n}\\n\\nRequirements:\\n- Give 5 YouTube title options.\\n- Give 3 thumbnail concepts.\\n- Give 3 to 5 short-form clip candidates, ranked best first.\\n- If timestamps exist in the transcript, preserve them accurately. Otherwise use null.\\n- Keep captions and social copy punchy, not generic.\\n- The editor handoff must be actionable and should reference the source URL when useful.\\n\\n</task>'\n  }]\n}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "1a51142c-0cce-43dd-8f61-d63e1f6aca46",
+      "name": "Claude — Production pack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        700,
+        380
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const meta = $('Normalize request').first().json;\nconst response = $json;\n\nfunction getText(resp) {\n  if (!resp) return '';\n  if (Array.isArray(resp.content)) {\n    const part = resp.content.find((p) => typeof p?.text === 'string');\n    return part?.text || '';\n  }\n  return '';\n}\n\nconst text = getText(response);\nif (!text) {\n  return [{\n    json: {\n      success: false,\n      source_url: meta.source_url,\n      generated_at: meta.generated_at,\n      error: response?.error?.message || 'Claude returned no text',\n      model: response?.model || 'claude-sonnet-5'\n    }\n  }];\n}\n\ntry {\n  const start = text.indexOf('{');\n  const end = text.lastIndexOf('}');\n  if (start === -1 || end === -1 || end <= start) throw new Error('No JSON object found in Claude response');\n  const pack = JSON.parse(text.slice(start, end + 1));\n  return [{\n    json: {\n      success: true,\n      source_url: meta.source_url,\n      generated_at: meta.generated_at,\n      model: response?.model || 'claude-sonnet-5',\n      usage: response?.usage || null,\n      pack\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      source_url: meta.source_url,\n      generated_at: meta.generated_at,\n      error: String(e?.message || e),\n      raw_response_preview: text.slice(0, 2000),\n      model: response?.model || 'claude-sonnet-5'\n    }\n  }];\n}"
+      },
+      "id": "9dfcdf30-c3a6-4448-9bc5-34abb33aadbb",
+      "name": "Parse production pack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Podcast AI Production Pack — Claude\n\n**Purpose:** turn a transcript + source video URL into an editor-ready production pack and launch/distribution copy.\n\n**Endpoint after activation**\n`POST https://n8n.openempower.com/webhook/podcast-ai-producer`\n\n**Required JSON**\n- `source_url`\n- `transcript` (timestamps strongly recommended)\n\n**Optional JSON**\n`episode_title`, `episode_number`, `guest`, `audience`, `language`, `cta`, `brand_notes`, `requested_by`\n\n**Authentication**\nIf `PODCAST_WEBHOOK_TOKEN` is set in the n8n environment, callers must include:\n`x-podcast-token: <token>`\n\n**Environment**\n- `ANTHROPIC_API_KEY` — required\n- `PODCAST_WEBHOOK_TOKEN` — optional but recommended\n\nClaude returns: episode positioning, cold open, edit notes, B-roll/graphics, chapters, 3–5 Shorts, YouTube titles/description/tags, thumbnail concepts, LinkedIn/X copy, newsletter copy, and editor handoff checklist.\n\nThis workflow deliberately does **not** upload or transcribe multi-GB video. Supply a transcript from your recording/transcription step; this keeps the workflow fast, cheap, and reliable.",
+        "height": 520,
+        "width": 760,
+        "color": 4
+      },
+      "id": "9dcb22f9-1d1e-4c4e-8a26-f47e571ea51b",
+      "name": "SETUP",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        220,
+        -180
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook: Podcast source": {
+      "main": [
+        [
+          {
+            "node": "Normalize request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize request": {
+      "main": [
+        [
+          {
+            "node": "Claude — Production pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude — Production pack": {
+      "main": [
+        [
+          {
+            "node": "Parse production pack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}
