@@ -1,0 +1,322 @@
+{
+  "id": "dcbe200f-2189-4144-800e-1b31ca314617",
+  "name": "Gmail AI Triage — Action Queues",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "e9b7d965-5012-43eb-bcec-5225d0c0e318",
+      "name": "Manual Test",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 460]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8,13,18 * * *"
+            }
+          ]
+        }
+      },
+      "id": "bf1c72ad-8666-42c7-9b48-b3bb2186edd2",
+      "name": "08:00 / 13:00 / 18:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300],
+      "notes": "Uses workflow timezone Europe/Amsterdam."
+    },
+    {
+      "parameters": {
+        "resource": "label",
+        "returnAll": true
+      },
+      "id": "bb98bbc7-f0c4-46c1-b507-3a3d920e3dc3",
+      "name": "Get All Gmail Labels",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [240, 380],
+      "notes": "Select the same Gmail OAuth2 credential used by the other Gmail nodes."
+    },
+    {
+      "parameters": {
+        "jsCode": "const wanted = ['1 · Oggi', '2 · Rispondere', '3 · In attesa', '4 · Follow-up'];\nconst byName = {};\n\nfor (const item of $input.all()) {\n  const name = String(item.json.name ?? '').trim();\n  const id = String(item.json.id ?? '').trim();\n  if (wanted.includes(name) && id) byName[name] = id;\n}\n\nconst missing = wanted.filter(name => !byName[name]);\nif (missing.length) {\n  throw new Error(`Missing Gmail workflow labels: ${missing.join(', ')}. Create them first, then retry.`);\n}\n\nreturn [{\n  json: {\n    wanted,\n    byName,\n    allIds: wanted.map(name => byName[name]),\n  }\n}];"
+      },
+      "id": "7faf6a04-e439-431d-b045-af640de1beda",
+      "name": "Resolve Queue Labels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 380],
+      "notes": "Fails safe if any of the four exact queue labels is missing."
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "returnAll": false,
+        "limit": 60,
+        "filters": {
+          "q": "in:inbox category:personal newer_than:7d -in:spam -in:trash",
+          "readStatus": "both"
+        }
+      },
+      "id": "15dc2e9b-0e0d-4686-a6ff-e00f8fb7f536",
+      "name": "Get Recent Personal Threads",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [720, 380],
+      "notes": "Thread-level search; includes both read and unread mail."
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "get",
+        "threadId": "={{ $json.id }}",
+        "simple": false,
+        "options": {}
+      },
+      "id": "fec9c9c4-6d3e-4235-9b51-13abc54031ab",
+      "name": "Get Thread Details",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [960, 380],
+      "notes": "Raw thread payload is used so chronology and message bodies can be analyzed."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const thread = $json;\nconst labelCfg = $('Resolve Queue Labels').first().json;\nconst wanted = labelCfg.wanted;\nconst byName = labelCfg.byName;\nconst ownAddresses = [\n  'luca@lucaberton.com',\n  'luca@lucaberton.it',\n  'luca@mrevolution.eu',\n];\n\nconst messages = Array.isArray(thread.messages) ? [...thread.messages] : [];\nif (!messages.length) return [];\n\nmessages.sort((a, b) => Number(a.internalDate || 0) - Number(b.internalDate || 0));\nconst lastInternalDate = String(messages[messages.length - 1]?.internalDate || '');\nif (!lastInternalDate) return [];\n\nconst state = $getWorkflowStaticData('global');\nstate.gmailTriageCache = state.gmailTriageCache || {};\nconst cached = state.gmailTriageCache[String(thread.id || '')];\nconst isManual = (typeof $execution !== 'undefined' && $execution?.mode === 'manual');\nif (!isManual && cached?.lastInternalDate === lastInternalDate) return [];\n\nfunction header(message, name) {\n  const headers = message?.payload?.headers || [];\n  const hit = headers.find(h => String(h.name || '').toLowerCase() === name.toLowerCase());\n  return String(hit?.value || '');\n}\n\nfunction b64urlDecode(value) {\n  if (!value) return '';\n  try {\n    let s = String(value).replace(/-/g, '+').replace(/_/g, '/');\n    while (s.length % 4) s += '=';\n    return Buffer.from(s, 'base64').toString('utf8');\n  } catch {\n    return '';\n  }\n}\n\nfunction stripHtml(html) {\n  return String(html || '')\n    .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n    .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')\n    .replace(/<br\\s*\\/?>/gi, '\\n')\n    .replace(/<\\/p>/gi, '\\n')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/gi, ' ')\n    .replace(/&amp;/gi, '&')\n    .replace(/&lt;/gi, '<')\n    .replace(/&gt;/gi, '>')\n    .replace(/&quot;/gi, '\"')\n    .replace(/&#39;/gi, \"'\")\n    .replace(/[ \\t]+\\n/g, '\\n')\n    .replace(/\\n{3,}/g, '\\n\\n')\n    .replace(/[ \\t]{2,}/g, ' ')\n    .trim();\n}\n\nfunction collectBodies(part, out) {\n  if (!part) return;\n  const mime = String(part.mimeType || '').toLowerCase();\n  const data = part?.body?.data;\n  if (data && mime === 'text/plain') out.plain.push(b64urlDecode(data));\n  if (data && mime === 'text/html') out.html.push(stripHtml(b64urlDecode(data)));\n  for (const child of (part.parts || [])) collectBodies(child, out);\n}\n\nfunction messageBody(message) {\n  const out = { plain: [], html: [] };\n  collectBodies(message?.payload, out);\n\n  let body = out.plain.filter(Boolean).join('\\n\\n').trim();\n  if (!body) body = out.html.filter(Boolean).join('\\n\\n').trim();\n  if (!body) body = String(message?.snippet || '').trim();\n  return body.slice(0, 3500);\n}\n\nfunction isMine(from) {\n  const f = String(from || '').toLowerCase();\n  return ownAddresses.some(addr => f.includes(addr));\n}\n\nconst threadLabelIds = new Set(\n  messages.flatMap(m => Array.isArray(m.labelIds) ? m.labelIds : [])\n);\nconst currentQueue =\n  wanted.find(name => threadLabelIds.has(byName[name])) || 'NONE';\n\nconst selectedMessages = messages.slice(-10);\nconst rendered = selectedMessages.map((m, idx) => {\n  const from = header(m, 'From');\n  const to = header(m, 'To');\n  const cc = header(m, 'Cc');\n  const subject = header(m, 'Subject');\n  const date = header(m, 'Date') || (m.internalDate ? new Date(Number(m.internalDate)).toISOString() : '');\n  const body = messageBody(m);\n  return [\n    `MESSAGE ${idx + 1}/${selectedMessages.length}`,\n    `Date: ${date}`,\n    `From: ${from}`,\n    `To: ${to}`,\n    cc ? `Cc: ${cc}` : '',\n    `Subject: ${subject}`,\n    `Sender is Luca: ${isMine(from) ? 'yes' : 'no'}`,\n    `Body:\\n${body}`,\n  ].filter(Boolean).join('\\n');\n}).join('\\n\\n---\\n\\n').slice(0, 20000);\n\nconst latest = messages[messages.length - 1];\nconst latestFrom = header(latest, 'From');\n\nreturn [{\n  json: {\n    thread_id: String(thread.id || latest?.threadId || ''),\n    current_queue: currentQueue,\n    last_internal_date: lastInternalDate,\n    latest_from: latestFrom,\n    latest_is_me: isMine(latestFrom),\n    message_count: messages.length,\n    thread_text: rendered,\n  }\n}];"
+      },
+      "id": "97455db7-17e1-4c15-91c3-f5b4fd88b292",
+      "name": "Build Triage Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 380],
+      "notes": "Decodes Gmail bodies, keeps the last 10 messages, caps prompt text, and skips unchanged threads in scheduled runs."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/responses",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'gpt-5.6-luna',\n  reasoning: { effort: 'none' },\n  max_output_tokens: 700,\n  input: [\n    {\n      role: 'developer',\n      content: [{\n        type: 'input_text',\n        text: `You are a conservative executive-inbox triage classifier.\n\nClassify the CURRENT STATE OF THE WHOLE EMAIL THREAD, not just the latest inbound message. First decide who owes the next meaningful action.\n\nLuca's own addresses include:\n- luca@lucaberton.com\n- luca@lucaberton.it\n- luca@mrevolution.eu\n\nChoose exactly one queue or NONE:\n\n1 · Oggi\nUse only for a genuinely time-sensitive action Luca must handle now: explicit deadline today/tomorrow, an event/meeting within about 24 hours that needs preparation or confirmation, an overdue promised deliverable requiring immediate work, or an active operational blocker. Do not use merely because a message is unread or old.\n\n2 · Rispondere\nUse when the latest substantive state requires Luca to reply, decide, provide information/documents, confirm something, make a call, or otherwise take the next direct action. If Luca has already answered the request later in the thread, do NOT use this.\n\n3 · In attesa\nUse when Luca has already taken the meaningful action or sent the latest substantive request and the next move belongs to another person/process. This includes waiting for confirmation, payment, dates, documents, approval, venue/budget answers, support resolution, etc.\n\n4 · Follow-up\nUse when Luca owes substantive offline work/review/preparation that is not due immediately, or when a deliberate future follow-up is warranted. Prefer In attesa if somebody else currently owes the next move.\n\nNONE\nUse for informational/completed messages, automated notifications, newsletters/promotions, FYI/OOO messages, acknowledgements with no action, closed/rejected opportunities, or threads where no meaningful action is pending.\n\nImportant:\n- A thread can have only one queue.\n- Respect chronology: later sent messages from Luca can supersede an older inbound request.\n- Do not invent deadlines or obligations.\n- Be conservative. If the required next step is ambiguous, choose NONE with lower confidence.\n- Existing queue is context only; correct it if the thread state clearly changed.\n- Never recommend sending an email automatically. Describe the human next action only.\n\nReturn only the requested JSON schema.`\n      }]\n    },\n    {\n      role: 'user',\n      content: [{\n        type: 'input_text',\n        text: `RUN TIME: ${$now.setZone('Europe/Amsterdam').toISO()}\nCURRENT QUEUE: ${$json.current_queue}\nLATEST SENDER IS LUCA: ${$json.latest_is_me ? 'yes' : 'no'}\nTHREAD ID: ${$json.thread_id}\n\nTHREAD:\n${$json.thread_text}`\n      }]\n    }\n  ],\n  text: {\n    format: {\n      type: 'json_schema',\n      name: 'gmail_triage',\n      strict: true,\n      schema: {\n        type: 'object',\n        properties: {\n          selected_label: {\n            type: 'string',\n            enum: ['NONE', '1 · Oggi', '2 · Rispondere', '3 · In attesa', '4 · Follow-up']\n          },\n          confidence: { type: 'number', minimum: 0, maximum: 1 },\n          reason: { type: 'string' },\n          next_action: { type: 'string' }\n        },\n        required: ['selected_label', 'confidence', 'reason', 'next_action'],\n        additionalProperties: false\n      }\n    }\n  }\n}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "66dc0a11-7374-4f19-9b94-d673897d87ca",
+      "name": "OpenAI - Classify Thread",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1440, 380],
+      "onError": "continueRegularOutput",
+      "notes": "Structured JSON output; no email content is used for any action other than classification."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const triage = $('Build Triage Input').item.json;\nconst response = $json;\n\nfunction getText(resp) {\n  if (!resp) return '';\n  if (typeof resp.output_text === 'string') return resp.output_text;\n  if (Array.isArray(resp.output)) {\n    for (const outputItem of resp.output) {\n      if (!Array.isArray(outputItem?.content)) continue;\n      for (const part of outputItem.content) {\n        if (typeof part?.text === 'string') return part.text;\n      }\n    }\n  }\n  if (resp.body) return getText(resp.body);\n  return '';\n}\n\nconst allowed = new Set([\n  'NONE',\n  '1 · Oggi',\n  '2 · Rispondere',\n  '3 · In attesa',\n  '4 · Follow-up',\n]);\n\nlet classificationOk = false;\nlet selectedLabel = 'NONE';\nlet reason = '';\nlet nextAction = '';\nlet confidence = 0;\nlet error = '';\n\ntry {\n  const text = getText(response);\n  if (!text) throw new Error(response?.error?.message || response?.message || 'OpenAI returned no structured output');\n  const ai = JSON.parse(text);\n\n  selectedLabel = allowed.has(ai.selected_label) ? ai.selected_label : 'NONE';\n  reason = String(ai.reason || '').trim().slice(0, 600);\n  nextAction = String(ai.next_action || '').trim().slice(0, 400);\n  confidence = Number(ai.confidence);\n  if (!Number.isFinite(confidence)) confidence = 0;\n  confidence = Math.max(0, Math.min(1, confidence));\n  classificationOk = true;\n} catch (e) {\n  error = String(e?.message || e).slice(0, 600);\n}\n\nconst labelCfg = $('Resolve Queue Labels').first().json;\nconst selectedLabelId = selectedLabel === 'NONE' ? '' : String(labelCfg.byName[selectedLabel] || '');\n\nconst safeToChange = classificationOk && confidence >= 0.72;\nconst needsChange = safeToChange && selectedLabel !== triage.current_queue;\n\nreturn [{\n  json: {\n    ...triage,\n    selected_label: selectedLabel,\n    selected_label_id: selectedLabelId,\n    confidence,\n    reason,\n    next_action: nextAction,\n    classification_ok: classificationOk,\n    safe_to_change: safeToChange,\n    needs_change: needsChange,\n    error,\n  }\n}];"
+      },
+      "id": "4b9965b4-0fec-48aa-b2dc-c9dcfa6e331c",
+      "name": "Parse Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1680, 380],
+      "notes": "Only classifications with confidence >= 0.72 are allowed to alter labels."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e5fc41a7-b225-4f59-8e14-a80790f33a43",
+              "leftValue": "={{ $json.needs_change }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "fea3618f-8a08-4f85-bdfe-525b07acbb86",
+      "name": "Needs Label Change?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1920, 380]
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "removeLabels",
+        "threadId": "={{ $json.thread_id }}",
+        "labelIds": "={{ $('Resolve Queue Labels').first().json.allIds }}"
+      },
+      "id": "d8f268c3-3b23-4249-a443-8ed90d298560",
+      "name": "Remove Old Queue Labels",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [2160, 260],
+      "notes": "Removes only the four workflow queue labels from the thread."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const classified = $('Parse Classification').item.json;\nreturn [{ json: classified }];"
+      },
+      "id": "29541b80-ca1c-411e-824a-7629e6c1f6ba",
+      "name": "Restore Classification Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2400, 260]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "937ecdbf-dacb-4e1a-a1c8-9c5c874057f0",
+              "leftValue": "={{ $json.selected_label }}",
+              "rightValue": "NONE",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "51d86196-db9b-4167-ae59-2c420586a0e4",
+      "name": "Has New Queue Label?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2640, 260]
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "addLabels",
+        "threadId": "={{ $json.thread_id }}",
+        "labelIds": "={{ [$json.selected_label_id] }}"
+      },
+      "id": "a87b114f-a633-478e-a3cb-423442063b98",
+      "name": "Add Selected Queue Label",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [2880, 180],
+      "notes": "Adds exactly one selected workflow queue label."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const classified = $('Parse Classification').item.json;\nif (!classified.classification_ok) return [{ json: classified }];\n\nconst state = $getWorkflowStaticData('global');\nstate.gmailTriageCache = state.gmailTriageCache || {};\nstate.gmailTriageCache[classified.thread_id] = {\n  lastInternalDate: classified.last_internal_date,\n  seenAt: Date.now(),\n  selectedLabel: classified.selected_label,\n  confidence: classified.confidence,\n};\n\nconst cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;\nfor (const [threadId, entry] of Object.entries(state.gmailTriageCache)) {\n  if (!entry?.seenAt || Number(entry.seenAt) < cutoff) delete state.gmailTriageCache[threadId];\n}\n\nreturn [{ json: classified }];"
+      },
+      "id": "315609e5-9e66-44f3-af19-5f7753595be3",
+      "name": "Cache Processed Thread",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3120, 380],
+      "notes": "Caches the latest Gmail internalDate only after a successful classification/write path."
+    },
+    {
+      "parameters": {
+        "content": "## Gmail AI triage — SETUP\n\n**What it does**\n- Runs at **08:00, 13:00, 18:00 Europe/Amsterdam** plus manual test.\n- Reads recent **personal Inbox threads** and classifies the whole conversation.\n- Maintains exactly one of: `1 · Oggi`, `2 · Rispondere`, `3 · In attesa`, `4 · Follow-up`.\n- Uses a **0.72 confidence threshold**. Uncertain classifications leave existing labels untouched.\n- Caches unchanged threads so they are not re-scored three times a day.\n- A manual execution bypasses the cache for a full re-test.\n\n**Safety**\n- Never sends/replies.\n- Never archives, trashes, deletes, snoozes, or marks messages read.\n- Only adds/removes the four workflow queue labels.\n\n**One-time setup**\n1. Create/select one **Gmail OAuth2** credential on every Gmail node (the deploy Action can reuse an existing Gmail credential reference if another workflow already has one).\n2. The four labels must already exist in Gmail with the exact names above.\n3. `OPENAI_API_KEY` must be available in the n8n container environment.\n4. Run **Manual Test**, inspect results/executions, then activate/publish.\n\nSearch window: `in:inbox category:personal newer_than:7d -in:spam -in:trash` (max 60 threads/run).",
+        "height": 620,
+        "width": 1040
+      },
+      "id": "a8aa8353-d12e-4eb1-bf73-95232827a9f0",
+      "name": "SETUP",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [0, -400]
+    }
+  ],
+  "connections": {
+    "Manual Test": {
+      "main": [[{"node": "Get All Gmail Labels", "type": "main", "index": 0}]]
+    },
+    "08:00 / 13:00 / 18:00": {
+      "main": [[{"node": "Get All Gmail Labels", "type": "main", "index": 0}]]
+    },
+    "Get All Gmail Labels": {
+      "main": [[{"node": "Resolve Queue Labels", "type": "main", "index": 0}]]
+    },
+    "Resolve Queue Labels": {
+      "main": [[{"node": "Get Recent Personal Threads", "type": "main", "index": 0}]]
+    },
+    "Get Recent Personal Threads": {
+      "main": [[{"node": "Get Thread Details", "type": "main", "index": 0}]]
+    },
+    "Get Thread Details": {
+      "main": [[{"node": "Build Triage Input", "type": "main", "index": 0}]]
+    },
+    "Build Triage Input": {
+      "main": [[{"node": "OpenAI - Classify Thread", "type": "main", "index": 0}]]
+    },
+    "OpenAI - Classify Thread": {
+      "main": [[{"node": "Parse Classification", "type": "main", "index": 0}]]
+    },
+    "Parse Classification": {
+      "main": [[{"node": "Needs Label Change?", "type": "main", "index": 0}]]
+    },
+    "Needs Label Change?": {
+      "main": [
+        [{"node": "Remove Old Queue Labels", "type": "main", "index": 0}],
+        [{"node": "Cache Processed Thread", "type": "main", "index": 0}]
+      ]
+    },
+    "Remove Old Queue Labels": {
+      "main": [[{"node": "Restore Classification Context", "type": "main", "index": 0}]]
+    },
+    "Restore Classification Context": {
+      "main": [[{"node": "Has New Queue Label?", "type": "main", "index": 0}]]
+    },
+    "Has New Queue Label?": {
+      "main": [
+        [{"node": "Add Selected Queue Label", "type": "main", "index": 0}],
+        [{"node": "Cache Processed Thread", "type": "main", "index": 0}]
+      ]
+    },
+    "Add Selected Queue Label": {
+      "main": [[{"node": "Cache Processed Thread", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Amsterdam"
+  },
+  "active": false
+}
