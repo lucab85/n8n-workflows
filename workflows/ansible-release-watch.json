@@ -208,7 +208,8 @@
     },
     {
       "parameters": {
-        "jsCode": "const src = $('Determine new versions').first().json;\nconst response = $json;\n\nfunction getText(resp) {\n  if (!resp) return '';\n  // OpenAI-compatible shape (served by claude-bridge, not Anthropic's own API).\n  return resp.choices?.[0]?.message?.content || '';\n}\n\nconst text = getText(response);\nif (!text) throw new Error('Claude returned no text: ' + (response?.error?.message || JSON.stringify(response).slice(0, 2000)));\nconst cleaned = text.trim().replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '').trim();\nconst jsonStart = cleaned.indexOf('{');\nconst jsonEnd = cleaned.lastIndexOf('}');\nconst draft = JSON.parse(cleaned.slice(jsonStart, jsonEnd + 1));\n\nconst today = new Date().toISOString().slice(0, 10);\nconst title = String(draft.title || (src.release_name + ' Released')).trim();\nconst filename = title.replace(/[\\\\/:*?\"<>|]/g, '') + '.md';\n\nconst frontmatter = [\n  '---',\n  'title: \"' + title.replace(/\"/g, '\\\\\"') + '\"',\n  'description: \"' + String(draft.description || '').replace(/\"/g, '\\\\\"') + '\"',\n  'author: \"Luca Berton\"',\n  'date: \"' + today + '\"',\n  'category: \"' + (['playbooks', 'modules', 'roles', 'inventory', 'troubleshooting', 'cloud', 'cloud-virtualization', 'security', 'networking', 'network', 'containers', 'windows', 'testing', 'basics', 'fundamentals', 'advanced', 'enterprise', 'collections', 'community', 'best-practices', 'getting-started', 'interviews', 'tools', 'news'].includes(draft.category) ? draft.category : 'news') + '\"',\n  'tags:',\n  ...(draft.tags || ['ansible', 'release']).map(t => '  - \"' + String(t).replace(/\"/g, '\\\\\"') + '\"'),\n  '---',\n].join('\\n');\n\nconst body = '# ' + title + '\\n\\n' + String(draft.body_markdown || '');\nconst fullContent = frontmatter + '\\n\\n' + body;\n\nconst branchSlug = 'ansible-release-' + String(src.repo_key).replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '-' + String(src.version).replace(/[^a-z0-9.]+/gi, '-').toLowerCase();\n\nconst newState = { ...src.full_state, [src.repo_key]: src.version };\n\nreturn [{ json: {\n  filename,\n  filePath: 'src/content/tutorials/' + filename,\n  fileContentBase64: Buffer.from(fullContent, 'utf-8').toString('base64'),\n  branch: branchSlug,\n  prTitle: 'New post: ' + title,\n  prBody: 'Auto-drafted by the Ansible release watch workflow.\\n\\nRepo/package: `' + src.repo_key + '`\\nNew version: `' + src.version + '` (previous: `' + (src.previous_version || 'none') + '`)\\nRelease: ' + src.url + '\\n\\n**Review before merging:**\\n- [ ] fact-check the drafted content against the real release notes\\n- [ ] add a thumbnail (falls back to the default one otherwise)\\n- [ ] adjust tone/length as needed',\n  stateJsonBase64: Buffer.from(JSON.stringify(newState, null, 2), 'utf-8').toString('base64'),\n  state_sha: src.state_sha,\n} }];"
+        "mode": "runOnceForEachItem",
+        "jsCode": "// runOnceForEachItem - this runs once PER changed resource (ansible/ansible,\n// the pypi community package, and any future collections), not once for the\n// whole batch. It used to default to \"run once for all items\" with $json /\n// .first(), which silently collapsed every run down to just the first\n// changed item and dropped the rest (e.g. the pypi community package never\n// got a PR because ansible/ansible always came first).\nconst src = $('Determine new versions').item.json;\nconst response = $json;\n\nfunction getText(resp) {\n  if (!resp) return '';\n  // OpenAI-compatible shape (served by claude-bridge, not Anthropic's own API).\n  return resp.choices?.[0]?.message?.content || '';\n}\n\nconst text = getText(response);\nif (!text) throw new Error('Claude returned no text: ' + (response?.error?.message || JSON.stringify(response).slice(0, 2000)));\nconst cleaned = text.trim().replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '').trim();\nconst jsonStart = cleaned.indexOf('{');\nconst jsonEnd = cleaned.lastIndexOf('}');\nconst draft = JSON.parse(cleaned.slice(jsonStart, jsonEnd + 1));\n\nconst today = new Date().toISOString().slice(0, 10);\nconst title = String(draft.title || (src.release_name + ' Released')).trim();\nconst filename = title.replace(/[\\\\/:*?\"<>|]/g, '') + '.md';\n\nconst frontmatter = [\n  '---',\n  'title: \"' + title.replace(/\"/g, '\\\\\"') + '\"',\n  'description: \"' + String(draft.description || '').replace(/\"/g, '\\\\\"') + '\"',\n  'author: \"Luca Berton\"',\n  'date: \"' + today + '\"',\n  'category: \"' + (['playbooks', 'modules', 'roles', 'inventory', 'troubleshooting', 'cloud', 'cloud-virtualization', 'security', 'networking', 'network', 'containers', 'windows', 'testing', 'basics', 'fundamentals', 'advanced', 'enterprise', 'collections', 'community', 'best-practices', 'getting-started', 'interviews', 'tools', 'news'].includes(draft.category) ? draft.category : 'news') + '\"',\n  'tags:',\n  ...(draft.tags || ['ansible', 'release']).map(t => '  - \"' + String(t).replace(/\"/g, '\\\\\"') + '\"'),\n  '---',\n].join('\\n');\n\nconst body = '# ' + title + '\\n\\n' + String(draft.body_markdown || '');\nconst fullContent = frontmatter + '\\n\\n' + body;\n\nconst branchSlug = 'ansible-release-' + String(src.repo_key).replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '-' + String(src.version).replace(/[^a-z0-9.]+/gi, '-').toLowerCase();\n\nconst newState = { ...src.full_state, [src.repo_key]: src.version };\n\nreturn { json: {\n  filename,\n  filePath: 'src/content/tutorials/' + filename,\n  fileContentBase64: Buffer.from(fullContent, 'utf-8').toString('base64'),\n  branch: branchSlug,\n  prTitle: 'New post: ' + title,\n  prBody: 'Auto-drafted by the Ansible release watch workflow.\\n\\nRepo/package: `' + src.repo_key + '`\\nNew version: `' + src.version + '` (previous: `' + (src.previous_version || 'none') + '`)\\nRelease: ' + src.url + '\\n\\n**Review before merging:**\\n- [ ] fact-check the drafted content against the real release notes\\n- [ ] add a thumbnail (falls back to the default one otherwise)\\n- [ ] adjust tone/length as needed',\n  stateJsonBase64: Buffer.from(JSON.stringify(newState, null, 2), 'utf-8').toString('base64'),\n  state_sha: src.state_sha,\n} };"
       },
       "id": "f1000000-0000-0000-0000-000000000009",
       "name": "Build post + branch",
@@ -267,7 +268,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ ref: 'refs/heads/' + $('Build post + branch').first().json.branch, sha: $json.object.sha }) }}",
+        "jsonBody": "={{ JSON.stringify({ ref: 'refs/heads/' + $('Build post + branch').item.json.branch, sha: $json.object.sha }) }}",
         "options": {
           "timeout": 30000
         }
@@ -286,7 +287,7 @@
     {
       "parameters": {
         "method": "PUT",
-        "url": "=https://api.github.com/repos/lucab85/ansiblebyexample.com/contents/src/content/tutorials/{{ encodeURIComponent($('Build post + branch').first().json.filename) }}",
+        "url": "=https://api.github.com/repos/lucab85/ansiblebyexample.com/contents/src/content/tutorials/{{ encodeURIComponent($('Build post + branch').item.json.filename) }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -302,7 +303,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ message: 'Add post: ' + $('Build post + branch').first().json.prTitle, content: $('Build post + branch').first().json.fileContentBase64, branch: $('Build post + branch').first().json.branch }) }}",
+        "jsonBody": "={{ JSON.stringify({ message: 'Add post: ' + $('Build post + branch').item.json.prTitle, content: $('Build post + branch').item.json.fileContentBase64, branch: $('Build post + branch').item.json.branch }) }}",
         "options": {
           "timeout": 30000
         }
@@ -336,7 +337,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ title: $('Build post + branch').first().json.prTitle, head: $('Build post + branch').first().json.branch, base: 'main', body: $('Build post + branch').first().json.prBody }) }}",
+        "jsonBody": "={{ JSON.stringify({ title: $('Build post + branch').item.json.prTitle, head: $('Build post + branch').item.json.branch, base: 'main', body: $('Build post + branch').item.json.prBody }) }}",
         "options": {
           "timeout": 30000
         }
@@ -369,7 +370,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify(Object.assign({ message: 'chore: update ansible-release-watch state', content: $('Build post + branch').first().json.stateJsonBase64, branch: 'main' }, $('Build post + branch').first().json.state_sha ? { sha: $('Build post + branch').first().json.state_sha } : {})) }}",
+        "jsonBody": "={{ JSON.stringify(Object.assign({ message: 'chore: update ansible-release-watch state', content: $('Build post + branch').item.json.stateJsonBase64, branch: 'main' }, $('Build post + branch').item.json.state_sha ? { sha: $('Build post + branch').item.json.state_sha } : {})) }}",
         "options": {
           "timeout": 30000
         }
