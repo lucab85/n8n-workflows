@@ -231,6 +231,26 @@ che convergono in un nodo con riferimenti `$('NomeNodo')` va sempre
 attraverso un Merge esplicito, non un collegamento diretto a due a
 uno.
 
+**Quarto problema, non risolto con certezza — probabile flakiness del
+bridge, non un bug deterministico:** un giro reale di
+`ansible-release-watch.json` è fallito con
+`Claude returned no text: {"error":"invalid syntax"}` — cioè
+claude-bridge ha risposto senza il campo `choices` atteso. Non sono
+riuscito a riprodurlo: una richiesta identica coi dati reali del
+momento (stesso changelog, stesso prompt) è andata a buon fine, e i
+log del bridge mostravano solo risposte 200 OK nei 45 minuti
+precedenti — quindi non un errore HTTP che spiegherebbe la cosa. Non
+avendo una causa certa, ho aggiunto due mitigazioni invece di un fix
+puntuale: `retryOnFail` (3 tentativi, 2s di distanza) su tutti e 5 i
+nodi HTTP Request che chiamano claude-bridge (`ansible-release-watch`,
+`advisory-lead-qualification`, `garmin-claude-coach`,
+`podcast-claude-producer`, `gmail-action-triage` — anche se aiuta solo
+per errori di rete/timeout genuini, non per un 200 con body
+inatteso come questo), e un messaggio d'errore più diagnostico nel
+nodo Parse di `ansible-release-watch` (mostra la risposta intera,
+non più troncata a 300 caratteri) così se ricapita si vede subito
+cosa contiene davvero.
+
 ### Setup Google Sheet (AI Prospect Scout)
 
 Foglio con tab `Prospects`, prima riga con queste intestazioni:
