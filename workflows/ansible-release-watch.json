@@ -141,17 +141,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "http://claude-bridge:8000/v1/chat/completions",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
-              "name": "x-api-key",
-              "value": "YOUR_ANTHROPIC_API_KEY"
-            },
-            {
-              "name": "anthropic-version",
-              "value": "2023-06-01"
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.CLAUDE_BRIDGE_KEY }}"
             },
             {
               "name": "content-type",
@@ -161,7 +157,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  model: 'claude-sonnet-5',\n  max_tokens: 4000,\n  system: 'Scrivi post per ansiblebyexample.com, il blog Ansible di Luca Berton, nello stile esatto dei suoi articoli esistenti su nuove versioni (es. \"Ansible 14 Community Package RC1 - Whats New and How to Test\"). Formato OBBLIGATORIO: un H1 col titolo, poi sezioni H2 tipo \"Introduction\", \"Whats New\" (con sotto-sezioni H3 se utile), un blocco ```bash``` con i comandi di installazione/verifica, ed eventualmente una tabella markdown se ci sono più componenti/collection coinvolte. Tono pratico e tecnico, terza persona, niente marketing. Rispondi SOLO con JSON valido, nessun altro testo, con questa forma esatta: {\"title\": string, \"description\": string (max 160 caratteri, per lo meta tag), \"category\": uno tra playbooks|modules|roles|inventory|troubleshooting|cloud|cloud-virtualization|security|networking|network|containers|windows|testing|basics|fundamentals|advanced|enterprise|collections|community|best-practices|getting-started|interviews|tools|news (per un annuncio di nuova versione, di solito 'news' e' la scelta giusta), \"tags\": array di 4-7 stringhe minuscole, \"body_markdown\": string (markdown del corpo, SENZA il front matter YAML e SENZA il titolo H1 iniziale visto che verranno aggiunti a parte)}',\n  messages: [{\n    role: 'user',\n    content: 'Nuova versione rilevata.\\n\\nRepo/pacchetto: ' + $json.repo_key + '\\nVersione nuova: ' + $json.version + '\\nVersione precedente conosciuta: ' + ($json.previous_version || 'nessuna (primo giro)') + '\\nURL release: ' + $json.url + '\\n\\nRelease notes / changelog (se disponibili):\\n' + ($json.notes || '(nessuna nota disponibile - PyPI non fornisce changelog inline, menzionalo e rimanda al link)')\n  }]\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'claude-sonnet',\n  messages: [\n    { role: 'system', content: \"Scrivi post per ansiblebyexample.com, il blog Ansible di Luca Berton, nello stile esatto dei suoi articoli esistenti su nuove versioni (es. \\\"Ansible 14 Community Package RC1 - Whats New and How to Test\\\"). Formato OBBLIGATORIO: un H1 col titolo, poi sezioni H2 tipo \\\"Introduction\\\", \\\"Whats New\\\" (con sotto-sezioni H3 se utile), un blocco ```bash``` con i comandi di installazione/verifica, ed eventualmente una tabella markdown se ci sono più componenti/collection coinvolte. Tono pratico e tecnico, terza persona, niente marketing. Rispondi SOLO con JSON valido, nessun altro testo, con questa forma esatta: {\\\"title\\\": string, \\\"description\\\": string (max 160 caratteri, per lo meta tag), \\\"category\\\": uno tra playbooks|modules|roles|inventory|troubleshooting|cloud|cloud-virtualization|security|networking|network|containers|windows|testing|basics|fundamentals|advanced|enterprise|collections|community|best-practices|getting-started|interviews|tools|news (per un annuncio di nuova versione, di solito la scelta giusta e news), \\\"tags\\\": array di 4-7 stringhe minuscole, \\\"body_markdown\\\": string (markdown del corpo, SENZA il front matter YAML e SENZA il titolo H1 iniziale visto che verranno aggiunti a parte). IMPORTANTE: rispondi SOLO con un oggetto JSON valido. Nessun preambolo, nessuna domanda di chiarimento, nessun blocco markdown, nessuna spiegazione fuori dal JSON. Se qualche informazione manca, fai una assunzione ragionevole e produci comunque JSON valido.\" },\n    { role: 'user', content: 'Nuova versione rilevata.\\n\\nRepo/pacchetto: ' + $json.repo_key + '\\nVersione nuova: ' + $json.version + '\\nVersione precedente conosciuta: ' + ($json.previous_version || 'nessuna (primo giro)') + '\\nURL release: ' + $json.url + '\\n\\nRelease notes / changelog (se disponibili):\\n' + ($json.notes || '(nessuna nota disponibile - PyPI non fornisce changelog inline, menzionalo e rimanda al link)') }\n  ]\n}) }}",
         "options": {
           "timeout": 90000
         }

@@ -231,25 +231,39 @@ che convergono in un nodo con riferimenti `$('NomeNodo')` va sempre
 attraverso un Merge esplicito, non un collegamento diretto a due a
 uno.
 
-**Quarto problema, non risolto con certezza — probabile flakiness del
-bridge, non un bug deterministico:** un giro reale di
-`ansible-release-watch.json` è fallito con
-`Claude returned no text: {"error":"invalid syntax"}` — cioè
-claude-bridge ha risposto senza il campo `choices` atteso. Non sono
-riuscito a riprodurlo: una richiesta identica coi dati reali del
-momento (stesso changelog, stesso prompt) è andata a buon fine, e i
-log del bridge mostravano solo risposte 200 OK nei 45 minuti
-precedenti — quindi non un errore HTTP che spiegherebbe la cosa. Non
-avendo una causa certa, ho aggiunto due mitigazioni invece di un fix
-puntuale: `retryOnFail` (3 tentativi, 2s di distanza) su tutti e 5 i
-nodi HTTP Request che chiamano claude-bridge (`ansible-release-watch`,
-`advisory-lead-qualification`, `garmin-claude-coach`,
-`podcast-claude-producer`, `gmail-action-triage` — anche se aiuta solo
-per errori di rete/timeout genuini, non per un 200 con body
-inatteso come questo), e un messaggio d'errore più diagnostico nel
-nodo Parse di `ansible-release-watch` (mostra la risposta intera,
-non più troncata a 300 caratteri) così se ricapita si vede subito
-cosa contiene davvero.
+**Quarto problema — trovato dopo un falso indizio.** Un giro reale di
+`ansible-release-watch.json` falliva con
+`Claude returned no text: {"error":"invalid syntax"}`. Prima ipotesi
+(sbagliata): flakiness del bridge — una richiesta identica coi dati
+reali del momento, fatta a mano, andava a buon fine, e i log del
+bridge mostravano solo 200 OK, quindi ho aggiunto `retryOnFail` +
+diagnostica migliore come mitigazione generica (rimasti, sono utili
+comunque). **Causa vera, trovata rifacendo la richiesta esattamente
+come la costruisce n8n** (stessa espressione JS, valutata con lo
+stesso motore, non ricostruita a mano in Python): il prompt esteso
+alla nuova tassonomia categorie conteneva la frase
+`'news' e' la scelta giusta` — apici singoli **dentro** una stringa JS
+delimitata a sua volta da apici singoli. Questo chiude la stringa in
+anticipo e produce un vero `SyntaxError: Unexpected identifier 'news'`
+quando n8n valuta l'espressione — da qui "invalid syntax" (il bridge e
+`api.anthropic.com` non c'entravano affatto). Confermato con
+`node --eval` sull'espressione esatta esportata dall'istanza live, non
+solo ipotizzato.
+
+**Nello stesso controllo è emerso un problema separato e più
+preoccupante:** il nodo `Claude - draft post` di `ansible-release-watch`
+era tornato a chiamare `api.anthropic.com` direttamente con la chiave
+placeholder (`YOUR_ANTHROPIC_API_KEY`), non più `claude-bridge` — un
+regressione silenziosa introdotta in uno dei re-import intermedi fatti
+in questa stessa sessione, mai fino ad ora verificata a livello di
+singolo campo (controllavo solo il conteggio totale dei workflow dopo
+ogni import, non il contenuto effettivo del nodo). Gli altri 4 workflow
+(`advisory-lead-qualification`, `garmin-claude-coach`,
+`podcast-claude-producer`, `gmail-action-triage`) non ne hanno risentito.
+Ricostruito il nodo da zero (URL, header, body in formato bridge, testo
+del prompt senza apici annidati) e — lezione imparata — verificato
+questa volta **ri-esportando subito dopo l'import** e controllando i
+campi effettivi, non solo il conteggio dei workflow.
 
 ### Setup Google Sheet (AI Prospect Scout)
 
