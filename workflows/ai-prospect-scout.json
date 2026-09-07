@@ -1,0 +1,646 @@
+{
+  "id": "23067e0a-3653-450a-99ce-4880ac7ccb01",
+  "name": "AI Prospect Scout v1 - Sheets + Apify + OpenAI",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "1c25d467-01cc-465c-ae03-09e0f25f04a5",
+      "name": "Manual Test",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        256,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "dcd8c154-dd31-4897-afbc-c8adec338bb0",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        256,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1vXNe7Qw9hUFPShRdsMB4romloO7iMbYr2t8oii3uVt0",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "name",
+          "cachedResultName": "",
+          "cachedResultUrl": ""
+        }
+      },
+      "id": "c82b05e7-fe4a-491c-ac9d-31ded0672834",
+      "name": "Read Prospects",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        496,
+        544
+      ],
+      "notes": "Seleziona qui le tue credenziali Google Sheets. Il foglio deve avere le colonne indicate nella nota Setup."
+    },
+    {
+      "parameters": {
+        "jsCode": "const MAX_PER_RUN = 5;\n\nconst rows = $input.all();\nconst selected = rows\n  .filter(item => String(item.json.status ?? '').trim().toUpperCase() === 'NEW')\n  .filter(item => String(item.json.website ?? '').trim() !== '')\n  .slice(0, MAX_PER_RUN);\n\nreturn selected.map(item => {\n  const r = item.json;\n\n  if (r.row_number === undefined || r.row_number === null || r.row_number === '') {\n    throw new Error('Google Sheets non ha restituito row_number. Controlla che la prima riga del foglio contenga le intestazioni.');\n  }\n\n  let website = String(r.website ?? '').trim();\n  if (website && !/^https?:\\/\\//i.test(website)) {\n    website = 'https://' + website;\n  }\n\n  return {\n    json: {\n      name: String(r.name ?? '').trim(),\n      company: String(r.company ?? '').trim(),\n      role: String(r.role ?? '').trim(),\n      linkedin_notes: String(r.linkedin_notes ?? '').trim(),\n      website,\n      status: 'PROCESSING',\n      score: r.score ?? '',\n      reason: String(r.reason ?? ''),\n      pain: String(r.pain ?? ''),\n      opening: String(r.opening ?? ''),\n      dm: String(r.dm ?? ''),\n      error: '',\n      processed_at: String(r.processed_at ?? ''),\n      row_number: r.row_number,\n    }\n  };\n});"
+      },
+      "id": "1e809166-58ff-414a-bd6f-982c0d17824b",
+      "name": "Select NEW Prospects",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        832
+      ],
+      "notes": "Prende al massimo 5 righe status=NEW per esecuzione e normalizza l'URL."
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Prospects",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "role",
+              "displayName": "role",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "linkedin_notes",
+              "displayName": "linkedin_notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "website",
+              "displayName": "website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "score",
+              "displayName": "score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pain",
+              "displayName": "pain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "opening",
+              "displayName": "opening",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "dm",
+              "displayName": "dm",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error",
+              "displayName": "error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "processed_at",
+              "displayName": "processed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "4b42946e-d2e7-4873-bcc3-5d66be7ca56a",
+      "name": "Mark PROCESSING",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        624,
+        592
+      ],
+      "notes": "Aggiorna subito status=PROCESSING per ridurre il rischio di elaborare due volte la stessa riga."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/actors/apify~website-content-crawler/run-sync-get-dataset-items",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "clean",
+              "value": "1"
+            },
+            {
+              "name": "format",
+              "value": "json"
+            },
+            {
+              "name": "limit",
+              "value": "5"
+            },
+            {
+              "name": "timeout",
+              "value": "120"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.APIFY_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  startUrls: [{ url: $json.website }],\n  maxCrawlDepth: 1,\n  maxCrawlPages: 5,\n  crawlerType: 'playwright:adaptive',\n  proxyConfiguration: { useApifyProxy: true }\n}) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "51c3a593-48a1-40e0-9f6c-ded32cebbd7b",
+      "name": "Apify - Crawl Website",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        896,
+        592
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "Usa APIFY_TOKEN dall'ambiente della VPS. Crawl massimo: 5 pagine, profondità 1."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Recupera il prospect che ha generato questa chiamata HTTP.\nconst prospect = $('Mark PROCESSING').item.json;\nconst raw = $json;\n\n// L'endpoint Apify può restituire un array di pagine oppure un oggetto.\nlet pages = [];\nif (Array.isArray(raw)) {\n  pages = raw;\n} else if (raw && Array.isArray(raw.body)) {\n  pages = raw.body;\n} else if (raw && typeof raw === 'object') {\n  // Alcune versioni/risposte di n8n trasformano un array JSON in un oggetto indicizzato.\n  const numericValues = Object.keys(raw)\n    .filter(k => /^\\d+$/.test(k))\n    .sort((a,b) => Number(a) - Number(b))\n    .map(k => raw[k]);\n  pages = numericValues.length ? numericValues : [raw];\n}\n\nconst chunks = [];\nconst sources = [];\n\nfor (const page of pages) {\n  if (!page || typeof page !== 'object') continue;\n\n  const url = String(page.url ?? page.loadedUrl ?? '').trim();\n  const title = String(page.title ?? '').trim();\n\n  let content =\n    page.markdown ??\n    page.text ??\n    page.content ??\n    page.pageFunctionResult?.markdown ??\n    page.pageFunctionResult?.text ??\n    '';\n\n  content = String(content ?? '')\n    .replace(/\\u0000/g, '')\n    .replace(/[ \\t]+\\n/g, '\\n')\n    .replace(/\\n{4,}/g, '\\n\\n\\n')\n    .trim();\n\n  if (!content) continue;\n\n  if (url) sources.push(url);\n  chunks.push(\n    `${title ? `# ${title}\\n` : ''}${url ? `SOURCE: ${url}\\n` : ''}${content}`\n  );\n}\n\n// 18k caratteri sono più che sufficienti per questa qualificazione e tengono basso il costo.\nconst websiteText = chunks.join('\\n\\n---\\n\\n').slice(0, 18000);\nconst scrapeOk = websiteText.length >= 200;\n\nreturn [{\n  json: {\n    name: prospect.name,\n    company: prospect.company,\n    role: prospect.role,\n    linkedin_notes: prospect.linkedin_notes,\n    website: prospect.website,\n    row_number: prospect.row_number,\n    website_text: websiteText || '[Contenuto del sito non disponibile]',\n    sources: [...new Set(sources)].slice(0, 5),\n    scrape_ok: scrapeOk,\n  }\n}];"
+      },
+      "id": "c777b36a-7868-4b38-83ae-4c052351e914",
+      "name": "Build AI Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        592
+      ],
+      "notes": "Compatta il dataset Apify e limita il contenuto a 18.000 caratteri."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/responses",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'gpt-5.6-luna',\n  reasoning: { effort: 'none' },\n  max_output_tokens: 1200,\n  input: [\n    {\n      role: 'developer',\n      content: [{\n        type: 'input_text',\n        text: `Sei un sales researcher B2B rigoroso.\nUsa esclusivamente le informazioni fornite nel prospect e nel contenuto pubblico del sito.\nNon inventare numeri, clienti, processi, strumenti o problemi che non siano supportati dai dati.\nSe le prove sono insufficienti, assegna uno score basso e dichiaralo nel reason.\nL'obiettivo è capire se il prospect è adatto a un servizio che migliora il follow-up dei lead per piccole agenzie e società di servizi.\nRispondi esclusivamente nel formato JSON richiesto.`\n      }]\n    },\n    {\n      role: 'user',\n      content: [{\n        type: 'input_text',\n        text: `PROSPECT\n\nNome: ${$json.name}\nRuolo: ${$json.role}\nAzienda: ${$json.company}\nNote LinkedIn raccolte manualmente: ${$json.linkedin_notes || '[nessuna nota]'}\nSito: ${$json.website}\n\nCONTENUTO PUBBLICO DEL SITO\n${$json.website_text}\n\nSEGNALI DA CERCARE\n- l'azienda genera lead\n- invita a call, audit, consulenze, demo o preventivi\n- vende servizi con valore abbastanza alto da giustificare un follow-up\n- il founder o il team commerciale probabilmente gestisce richieste inbound/outbound\n- esiste un punto del funnel in cui un prospect interessato può non prenotare o non rispondere subito\n\nSCORING\nAssegna score da 1 a 10.\n8-10 = segnali forti e concreti.\n5-7 = potenziale ma evidenza incompleta.\n1-4 = fit debole o informazioni insufficienti.\n\nOUTPUT\nreason: spiega in una frase perché hai assegnato lo score, citando un segnale concreto.\npain: UN SOLO problema commerciale plausibile; non presentarlo come fatto certo se non è dimostrato.\nopening: una frase specifica che dimostri che abbiamo osservato l'attività.\ndm: LinkedIn DM in italiano, circa 300 caratteri massimo.\n\nREGOLE DM\n- niente parole \"AI\" o \"automazione\"\n- niente link\n- niente complimenti generici\n- niente pitch aggressivo\n- tono umano e breve\n- deve parlare del loro processo di follow-up\n- deve terminare con una domanda.`\n      }]\n    }\n  ],\n  text: {\n    format: {\n      type: 'json_schema',\n      name: 'prospect_assessment',\n      strict: true,\n      schema: {\n        type: 'object',\n        properties: {\n          score: { type: 'integer' },\n          reason: { type: 'string' },\n          pain: { type: 'string' },\n          opening: { type: 'string' },\n          dm: { type: 'string' }\n        },\n        required: ['score', 'reason', 'pain', 'opening', 'dm'],\n        additionalProperties: false\n      }\n    }\n  }\n}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "8c59d2a9-28b5-4aa5-a611-c85cf38f130e",
+      "name": "OpenAI - Score + DM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1408,
+        592
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "Usa OPENAI_API_KEY dall'ambiente. Modello: gpt-5.6-luna. Output forzato con JSON Schema."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const prospect = $('Build AI Input').item.json;\nconst response = $json;\n\nfunction getText(resp) {\n  if (!resp) return '';\n  if (typeof resp.output_text === 'string') return resp.output_text;\n\n  if (Array.isArray(resp.output)) {\n    for (const outputItem of resp.output) {\n      if (!Array.isArray(outputItem?.content)) continue;\n      for (const part of outputItem.content) {\n        if (typeof part?.text === 'string') return part.text;\n      }\n    }\n  }\n\n  // Se l'HTTP Request è configurato per includere la risposta completa.\n  if (resp.body) return getText(resp.body);\n  return '';\n}\n\nlet status = 'READY';\nlet error = '';\nlet ai = {};\n\ntry {\n  const text = getText(response);\n  if (!text) {\n    throw new Error(response?.message || response?.error?.message || 'OpenAI non ha restituito testo strutturato');\n  }\n\n  ai = typeof text === 'string' ? JSON.parse(text) : text;\n} catch (e) {\n  status = 'ERROR';\n  error = String(e?.message || e).slice(0, 500);\n}\n\nlet score = Number(ai.score);\nif (!Number.isFinite(score)) score = 1;\nscore = Math.max(1, Math.min(10, Math.round(score)));\n\nlet dm = String(ai.dm ?? '').trim();\nif (dm.length > 320) dm = dm.slice(0, 317).trimEnd() + '...';\n\nreturn [{\n  json: {\n    name: prospect.name,\n    company: prospect.company,\n    role: prospect.role,\n    linkedin_notes: prospect.linkedin_notes,\n    website: prospect.website,\n    status,\n    score: status === 'READY' ? score : '',\n    reason: status === 'READY' ? String(ai.reason ?? '').trim() : '',\n    pain: status === 'READY' ? String(ai.pain ?? '').trim() : '',\n    opening: status === 'READY' ? String(ai.opening ?? '').trim() : '',\n    dm: status === 'READY' ? dm : '',\n    error,\n    processed_at: new Date().toISOString(),\n    row_number: prospect.row_number,\n  }\n}];"
+      },
+      "id": "76bcf32e-74e5-49f4-82d7-79e5dc348f01",
+      "name": "Parse Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        592
+      ],
+      "notes": "Valida il risultato, limita score a 1-10 e DM a 320 caratteri. In caso di errore imposta status=ERROR."
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Prospects",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "role",
+              "displayName": "role",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "linkedin_notes",
+              "displayName": "linkedin_notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "website",
+              "displayName": "website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "score",
+              "displayName": "score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pain",
+              "displayName": "pain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "opening",
+              "displayName": "opening",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "dm",
+              "displayName": "dm",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error",
+              "displayName": "error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "processed_at",
+              "displayName": "processed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "0560ce26-fe47-4868-a00e-bcc92ac38fad",
+      "name": "Update Prospect",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1936,
+        592
+      ],
+      "notes": "Scrive score, reason, pain, opening, dm e status READY/ERROR."
+    },
+    {
+      "parameters": {
+        "content": "## AI Prospect Scout v1 — SETUP\n\n**Google Sheet / tab:** `Prospects`\n\nIntestazioni (prima riga):\n`name | company | role | linkedin_notes | website | status | score | reason | pain | opening | dm | error | processed_at`\n\n1. Sostituisci `YOUR_GOOGLE_SHEET_ID` nei 3 nodi Google Sheets.\n2. Seleziona la stessa credenziale Google Sheets nei 3 nodi.\n3. Nella VPS/container n8n imposta:\n   - `APIFY_TOKEN`\n   - `OPENAI_API_KEY`\n4. Inserisci un prospect e metti `status = NEW`.\n5. Esegui **Manual Test**.\n6. Se funziona, attiva il workflow: partirà ogni 15 minuti.\n\n**Comportamento:** max 5 prospect per run; Apify visita max 5 pagine/prospect; OpenAI restituisce JSON strutturato; il foglio viene aggiornato a `READY` oppure `ERROR`.\n\n**Importante:** questo workflow NON fa scraping o invio automatico su LinkedIn.",
+        "height": 520,
+        "width": 1048
+      },
+      "id": "def5fed1-4061-44f6-98b9-6e6f7e66b49b",
+      "name": "SETUP",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -32
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Test": {
+      "main": [
+        [
+          {
+            "node": "Read Prospects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Read Prospects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Prospects": {
+      "main": [
+        [
+          {
+            "node": "Select NEW Prospects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select NEW Prospects": {
+      "main": [
+        [
+          {
+            "node": "Mark PROCESSING",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark PROCESSING": {
+      "main": [
+        [
+          {
+            "node": "Apify - Crawl Website",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify - Crawl Website": {
+      "main": [
+        [
+          {
+            "node": "Build AI Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build AI Input": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Score + DM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Score + DM": {
+      "main": [
+        [
+          {
+            "node": "Parse Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Result": {
+      "main": [
+        [
+          {
+            "node": "Update Prospect",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "active": false
+}
