@@ -176,6 +176,33 @@ workflow, è un cambio localizzato: riporta il nodo HTTP a
 (vedi la cronologia git di questi file per la forma esatta) e il nodo
 Parse a leggere `resp.content`.
 
+**Bug reale trovato provando `ansible-release-watch.json` per davvero
+(non solo con dati sintetici):** Claude, nonostante l'istruzione "niente
+blocchi markdown", a volte avvolge comunque il JSON in un blocco
+` ```json ... ``` `. Il parsing originale faceva `text.indexOf('{')` e
+poi prendeva tutto fino alla fine della stringa — le backtick di
+chiusura finivano dentro `JSON.parse()` e lo rompevano
+(`Unexpected non-whitespace character after JSON`), facendo fallire
+l'intera esecuzione (il nodo non aveva un `onError`). Riprodotto con
+una vera chiamata al bridge prima di scrivere il fix, non solo ipotizzato.
+Il fix, applicato a tutti e 4 i nodi Parse che leggono JSON da Claude
+(`ansible-release-watch`, `advisory-lead-qualification`,
+`podcast-claude-producer`, `gmail-action-triage`): spoglia un eventuale
+fence markdown iniziale/finale prima di cercare `{`, e usa
+`lastIndexOf('}')` invece di prendere tutto fino alla fine della
+stringa.
+
+Nello stesso giro, `ansible-release-watch.json` aveva anche un
+secondo problema collegato: il prompt vincolava `category` a
+`fundamentals|collections|advanced`, ma Claude ha scritto `"News"` per
+un annuncio di release (ragionevole, mai categoria concessa dal
+prompt). La vera tassonomia del blog (`src/lib/constants.ts` in
+`ansiblebyexample.com`) ha molte più categorie — ho aggiunto `news`
+lì (era mancante anche per gli articoli scritti a mano) e allargato
+sia il prompt che la validazione lato codice nel workflow a tutta la
+tassonomia reale, con fallback a `'news'` invece di `'fundamentals'`
+per un annuncio di versione.
+
 ### Setup Google Sheet (AI Prospect Scout)
 
 Foglio con tab `Prospects`, prima riga con queste intestazioni:
