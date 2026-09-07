@@ -1,0 +1,102 @@
+name: Deploy Gmail triage workflow to n8n
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - workflows/gmail-action-triage.json
+      - .github/workflows/deploy-gmail-triage.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      N8N_BASE_URL: https://n8n.openempower.com
+      WORKFLOW_FILE: workflows/gmail-action-triage.json
+      WORKFLOW_NAME: Gmail action triage - 3x daily
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check deployment credential
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.N8N_API_KEY }}" ]; then
+            echo "::error::Repository secret N8N_API_KEY is not configured."
+            exit 1
+          fi
+
+      - name: Validate workflow JSON
+        run: jq empty "$WORKFLOW_FILE"
+
+      - name: Create or update workflow
+        id: deploy
+        shell: bash
+        env:
+          N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          jq '{name, nodes, connections, settings}' "$WORKFLOW_FILE" > /tmp/workflow.json
+
+          list_response=$(curl --fail-with-body --silent --show-error \
+            "$N8N_BASE_URL/api/v1/workflows?limit=100" \
+            -H "X-N8N-API-KEY: $N8N_API_KEY")
+
+          workflow_id=$(jq -r --arg name "$WORKFLOW_NAME" \
+            '.data[]? | select(.name == $name) | .id' <<<"$list_response" | head -n1)
+
+          if [ -n "$workflow_id" ]; then
+            echo "Updating existing workflow $workflow_id"
+            response=$(curl --fail-with-body --silent --show-error \
+              -X PUT "$N8N_BASE_URL/api/v1/workflows/$workflow_id" \
+              -H "X-N8N-API-KEY: $N8N_API_KEY" \
+              -H "Content-Type: application/json" \
+              --data-binary @/tmp/workflow.json)
+          else
+            echo "Creating workflow"
+            response=$(curl --fail-with-body --silent --show-error \
+              -X POST "$N8N_BASE_URL/api/v1/workflows" \
+              -H "X-N8N-API-KEY: $N8N_API_KEY" \
+              -H "Content-Type: application/json" \
+              --data-binary @/tmp/workflow.json)
+            workflow_id=$(jq -r '.id' <<<"$response")
+          fi
+
+          if [ -z "$workflow_id" ] || [ "$workflow_id" = "null" ]; then
+            echo "::error::n8n did not return a workflow id"
+            echo "$response"
+            exit 1
+          fi
+
+          echo "workflow_id=$workflow_id" >> "$GITHUB_OUTPUT"
+
+      - name: Verify workflow exists and stays inactive
+        shell: bash
+        env:
+          N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
+          WORKFLOW_ID: ${{ steps.deploy.outputs.workflow_id }}
+        run: |
+          set -euo pipefail
+          response=$(curl --fail-with-body --silent --show-error \
+            "$N8N_BASE_URL/api/v1/workflows/$WORKFLOW_ID" \
+            -H "X-N8N-API-KEY: $N8N_API_KEY")
+          echo "$response" | jq '{id, name, active}'
+
+          active=$(jq -r '.active' <<<"$response")
+          if [ "$active" = "true" ]; then
+            curl --fail-with-body --silent --show-error \
+              -X POST "$N8N_BASE_URL/api/v1/workflows/$WORKFLOW_ID/deactivate" \
+              -H "X-N8N-API-KEY: $N8N_API_KEY" \
+              -o /tmp/deactivate-response.json
+            echo "Workflow was active; deactivated until Gmail/LLM credentials are connected."
+          fi
+
+      - name: Next step
+        run: |
+          echo "Workflow deployed to n8n.openempower.com but intentionally left inactive."
+          echo "Open it in n8n, select Luca's Gmail OAuth credential in the Gmail nodes, configure the Anthropic key/node, run Manual Test, then activate."
