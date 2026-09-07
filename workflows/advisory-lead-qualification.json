@@ -1,0 +1,276 @@
+{
+  "id": "e92592d3-70f1-4a7b-b89d-d7ce01417209",
+  "name": "Advisory lead qualification",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "advisory-lead",
+        "httpMethod": "POST",
+        "options": {}
+      },
+      "id": "c2000000-0000-0000-0000-000000000001",
+      "name": "Webhook: New lead",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        400
+      ],
+      "notes": "Collega qui il form del sito (POST con name, email, company, message)."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize + validate the incoming form payload. Field names below assume\n// a plain JSON POST body: { name, email, company, message }. If your form\n// sends different keys, remap them here.\nconst b = $input.first().json.body || $input.first().json || {};\nconst email = String(b.email || '').trim();\nif (!email || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {\n  throw new Error('missing/invalid email in lead payload - got keys: ' + Object.keys(b).join(','));\n}\nreturn [{ json: {\n  name: String(b.name || '').trim() || 'unknown',\n  email,\n  company: String(b.company || '').trim(),\n  message: String(b.message || '').trim(),\n  received_at: new Date().toISOString(),\n} }];"
+      },
+      "id": "c2000000-0000-0000-0000-000000000002",
+      "name": "Validate lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "YOUR_ANTHROPIC_API_KEY"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'claude-sonnet-5',\n  max_tokens: 500,\n  system: 'Sei l\\'assistente di Luca Berton, Production AI Expert (consulenza enterprise su piattaforme AI, Kubernetes, MLOps, GPU infra, governance/compliance). Valuti se un lead in ingresso e coerente con questo servizio: architettura AI enterprise, non sviluppo software generico, non richieste di formazione base. Rispondi SOLO con JSON valido, nessun altro testo.',\n  messages: [{\n    role: 'user',\n    content: 'LEAD\\n\\nNome: ' + $json.name + '\\nAzienda: ' + $json.company + '\\nEmail: ' + $json.email + '\\nMessaggio: ' + $json.message + '\\n\\nRestituisci: {\"score\": 1-10, \"reason\": \"una frase\", \"suggested_reply\": \"bozza di risposta breve in italiano o inglese a seconda della lingua del messaggio\"}'\n  }]\n}) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "c2000000-0000-0000-0000-000000000003",
+      "name": "Claude - Score lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        680,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('Validate lead').first().json;\nconst response = $json;\n\nfunction getText(resp) {\n  if (!resp) return '';\n  if (Array.isArray(resp.content)) {\n    for (const part of resp.content) {\n      if (typeof part?.text === 'string') return part.text;\n    }\n  }\n  return '';\n}\n\nlet status = 'SCORED';\nlet error = '';\nlet ai = {};\ntry {\n  const text = getText(response);\n  if (!text) throw new Error(response?.error?.message || 'Claude returned no text');\n  const jsonStart = text.indexOf('{');\n  ai = JSON.parse(text.slice(jsonStart));\n} catch (e) {\n  status = 'ERROR';\n  error = String(e?.message || e).slice(0, 300);\n}\n\nlet score = Number(ai.score);\nif (!Number.isFinite(score)) score = null;\n\nreturn [{ json: {\n  name: lead.name,\n  email: lead.email,\n  company: lead.company,\n  message: lead.message,\n  received_at: lead.received_at,\n  status,\n  score,\n  reason: ai.reason || '',\n  suggested_reply: ai.suggested_reply || '',\n  error,\n} }];"
+      },
+      "id": "c2000000-0000-0000-0000-000000000004",
+      "name": "Parse score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "email"
+          ],
+          "schema": [
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message",
+              "displayName": "message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "received_at",
+              "displayName": "received_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "score",
+              "displayName": "score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "suggested_reply",
+              "displayName": "suggested_reply",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error",
+              "displayName": "error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "c2000000-0000-0000-0000-000000000005",
+      "name": "Log to Leads sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1120,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Advisory lead qualification — SETUP\n\n1. Crea un Google Sheet con tab **Leads**, intestazioni: `name | email | company | message | received_at | status | score | reason | suggested_reply | error`.\n2. Sostituisci `YOUR_GOOGLE_SHEET_ID` nel nodo Google Sheets, seleziona la tua credenziale.\n3. Sostituisci `YOUR_ANTHROPIC_API_KEY` nel nodo HTTP Request (Claude).\n4. Collega il form del sito all'URL webhook di questo nodo (Production URL, dopo aver attivato il workflow): `POST https://<tuo-n8n>/webhook/advisory-lead` con body JSON `{name, email, company, message}`.\n5. Il webhook risponde 200 subito (n8n di default) - lo scoring gira in background e finisce nel foglio.\n\n**Nota:** non manda nessuna risposta automatica al lead - scrive solo lo score + una bozza di risposta nel foglio, la mandi tu.",
+        "height": 380,
+        "width": 900
+      },
+      "id": "c2000000-0000-0000-0000-000000000006",
+      "name": "SETUP",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        40
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook: New lead": {
+      "main": [
+        [
+          {
+            "node": "Validate lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate lead": {
+      "main": [
+        [
+          {
+            "node": "Claude - Score lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude - Score lead": {
+      "main": [
+        [
+          {
+            "node": "Parse score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse score": {
+      "main": [
+        [
+          {
+            "node": "Log to Leads sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

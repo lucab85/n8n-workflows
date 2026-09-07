@@ -17,6 +17,23 @@ gira in produzione.
 | `workflows/surfboard-sniper.json` | Cerca tavole da surf su Facebook Marketplace dentro un "buy box" (marca/misura/prezzo/raggio) e avvisa su Telegram quando trova un match nuovo | ogni 30 min |
 | `workflows/garmin-claude-coach.json` | Legge i dati di recovery (sonno, HRV) da Supabase e chiede a Claude un piano di allenamento del giorno | ogni mattina alle 6:00 |
 | `garmin-claude-coach/garmin_daily_pull.py` | Script Python che fa login su Garmin Connect e scrive i dati (attività, sonno, HRV, peso) su Supabase — è il pezzo che alimenta il workflow qui sopra | eseguito da n8n (`executeCommand`) o da cron esterno |
+| `workflows/blog-to-convertkit.json` | Legge `lucaberton.com/rss.xml`, e per ogni post nuovo crea un **draft** (non invia) di broadcast su ConvertKit | ogni 6 ore / manuale |
+| `workflows/advisory-lead-qualification.json` | Riceve un lead dal form del sito via webhook, lo fa valutare da Claude (fit per consulenza enterprise AI, score 1-10 + bozza di risposta) e lo scrive su Google Sheets | webhook |
+| `workflows/speaking-intake.json` | Riceve un invito/CFP via webhook e lo logga su Google Sheets (`status: NEW`) | webhook |
+| `workflows/speaking-reminders.json` | Ogni giorno controlla il foglio Speaking e manda un'email di promemoria per le scadenze CFP entro 7 giorni ancora non gestite | ogni 24 ore |
+
+Questi ultimi quattro li ho scritti da zero per il tuo business
+(lucaberton.com — Production AI advisory, non le automazioni hobby dei
+repo `aaronparton2-sketch`), sulla base delle opportunità di automazione
+più ovvie per un consulente/formatore: distribuzione contenuti,
+qualifica lead, pipeline conferenze. Ho verificato `lucaberton.com/rss.xml`
+esiste davvero (RSS 2.0 standard) e testato il parsing contro il feed
+reale prima di scriverlo nel workflow — non è un endpoint indovinato.
+Non ho automatizzato il tracking iscrizioni/recensioni sui corsi
+(Coursera/Udemy/Pluralsight/Educative): nessuna di queste piattaforme
+espone un'API pubblica affidabile per un singolo instructor senza
+accordi di partnership, quindi costruire un polling automatico lì
+avrebbe significato inventarsi un endpoint che non esiste davvero.
 
 Le fonti originali:
 [japow-event](https://github.com/aaronparton2-sketch/japow-event),
@@ -99,14 +116,15 @@ nodo HTTP Request (cercalo con `grep -rn YOUR_ workflows/`):
 
 | Servizio | Usato da | Dove ottenerla |
 |---|---|---|
-| Google Sheets | AI Prospect Scout | OAuth2 o service account, Google Cloud Console |
+| Google Sheets | AI Prospect Scout, blog-to-convertkit, advisory-lead-qualification, speaking-* | OAuth2 o service account, Google Cloud Console |
 | Telegram (bot) | japow-*, swell-event, surfboard-sniper | [@BotFather](https://t.me/BotFather) su Telegram |
 | Supabase | japow-*, surfboard-sniper, garmin-claude-coach | Project Settings → API, sul tuo progetto Supabase |
 | RapidAPI (AeroDataBox) | japow-3-arrival-sequence, swell-event | rapidapi.com, sottoscrivi AeroDataBox |
 | Bland.ai | japow-3-arrival-sequence, swell-event | dashboard Bland.ai → API keys |
 | Apify | swell-event, surfboard-sniper | apify.com → Settings → Integrations |
-| Anthropic (Claude) | garmin-claude-coach | console.anthropic.com → API Keys |
+| Anthropic (Claude) | garmin-claude-coach, advisory-lead-qualification | console.anthropic.com → API Keys |
 | Garmin Connect | garmin-claude-coach (script Python, non il workflow) | il tuo login Garmin normale |
+| SMTP | speaking-reminders | il tuo provider email (es. Gmail App Password) |
 
 ### Setup Google Sheet (AI Prospect Scout)
 
@@ -162,15 +180,55 @@ non ha Python installato — o lo esegui con un cron esterno al container
 `garminconnect` dentro. `PROMPTS.md` nella stessa cartella ha 18 prompt
 di coaching pronti da usare nel nodo "Ask Claude — coach".
 
-### Webhook da esporre (japow-2, japow-3)
+### Setup blog -> ConvertKit
 
-Se vuoi che Telegram e il tracker di posizione (OwnTracks / iOS
-Shortcuts) raggiungano l'istanza, `WEBHOOK_URL` in `.env` deve puntare a
-un host pubblicamente raggiungibile in HTTPS (non `localhost`) — path
-esposti dai workflow:
+1. Google Sheet, tab **BlogLog**, intestazioni: `guid | title | link | sent_to_convertkit_at`.
+2. `CONVERTKIT_API_SECRET` in `.env` (ConvertKit → Account Settings →
+   API Secret — non la API Key pubblica, quella non basta per creare
+   broadcast).
+3. Il workflow crea solo **draft** (`public: false`) — non manda niente
+   da solo, li rivedi e li invii tu dalla dashboard ConvertKit.
+4. Prima di attivarlo: esegui **Manual Test** una volta e controlla che
+   `BlogLog` si popoli con i post attuali, così al primo giro
+   automatico non ti ritrovi 50 draft insieme (o svuota/pre-popola il
+   foglio con i guid che vuoi considerare "già visti").
+
+### Setup lead qualification (advisory)
+
+1. Google Sheet, tab **Leads**, intestazioni: `name | email | company | message | received_at | status | score | reason | suggested_reply | error`.
+2. `YOUR_ANTHROPIC_API_KEY` nel nodo "Claude - Score lead".
+3. Collega il form del sito all'URL webhook (dopo l'attivazione):
+   `POST https://<tuo-n8n>/webhook/advisory-lead` con body JSON
+   `{name, email, company, message}` — se il tuo form manda altri nomi
+   di campo, rimappali nel nodo "Validate lead".
+4. Non manda nessuna risposta automatica al lead: scrive score + bozza
+   di risposta nel foglio, la mandi tu.
+
+### Setup speaking pipeline
+
+1. Google Sheet, tab **Speaking**, intestazioni: `conference | event_date | cfp_deadline | notes | status | logged_at` (date in `YYYY-MM-DD`).
+2. `speaking-intake.json`: URL webhook (dopo l'attivazione)
+   `POST https://<tuo-n8n>/webhook/speaking-invite` con body JSON
+   `{conference, event_date, cfp_deadline, notes}` — utile con
+   qualunque cosa sappia fare un POST (un form esterno, una automazione
+   Notion, anche solo `curl` a mano quando ricevi un invito via email).
+3. `speaking-reminders.json`: serve una credenziale **SMTP** in n8n
+   (va bene una Gmail App Password). Gira una volta al giorno, manda
+   un'email per ogni riga `status=NEW` con `cfp_deadline` entro 7
+   giorni, poi marca la riga `REMINDED` così non te la rimanda ogni
+   giorno.
+
+### Webhook da esporre (japow-2, japow-3, advisory-lead-qualification, speaking-intake)
+
+Se vuoi che Telegram, il tracker di posizione (OwnTracks / iOS
+Shortcuts) e il form del sito raggiungano l'istanza, `WEBHOOK_URL` in
+`.env` deve puntare a un host pubblicamente raggiungibile in HTTPS (non
+`localhost`) — path esposti dai workflow:
 
 - `POST /webhook/japow-poll` — risposta al sondaggio Telegram
 - `POST /webhook/japow-location` — ping di posizione durante il transfer
+- `POST /webhook/advisory-lead` — nuovo lead dal form del sito
+- `POST /webhook/speaking-invite` — nuovo invito/CFP
 
 ## Cosa NON fa questo repo
 
@@ -183,3 +241,12 @@ esposti dai workflow:
   LinkedIn — prepara solo il messaggio, l'invio resta manuale.
 - `swell-event.json` non prenota voli né controlla la posta in automatico
   (vedi sopra) — si ferma all'invio delle opzioni di volo via email.
+- `blog-to-convertkit.json` non invia mai newsletter da solo — crea solo
+  draft, l'invio è sempre una tua decisione manuale.
+- `advisory-lead-qualification.json` non risponde mai al lead — scrive
+  solo score e bozza di risposta nel foglio.
+- Non c'è nessuna automazione per iscrizioni/recensioni sui corsi
+  (Coursera/Udemy/Pluralsight/Educative) — quelle piattaforme non
+  espongono un'API pubblica affidabile per un singolo instructor, quindi
+  non ho costruito un'integrazione che si basa su un endpoint che non
+  esiste davvero.

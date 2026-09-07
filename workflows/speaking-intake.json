@@ -1,0 +1,167 @@
+{
+  "id": "fe83afad-9ec4-43bb-8b04-46d2bfaf5691",
+  "name": "Speaking pipeline - intake",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "speaking-invite",
+        "httpMethod": "POST",
+        "options": {}
+      },
+      "id": "d3000000-0000-0000-0000-000000000001",
+      "name": "Webhook: New invite",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        400
+      ],
+      "notes": "POST manuale (curl, Notion automation, Zapier, ecc.) o form esterno: {conference, event_date, cfp_deadline, notes}."
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $input.first().json.body || $input.first().json || {};\nconst conference = String(b.conference || '').trim();\nif (!conference) throw new Error('missing conference name - got keys: ' + Object.keys(b).join(','));\nreturn [{ json: {\n  conference,\n  event_date: String(b.event_date || '').trim(),\n  cfp_deadline: String(b.cfp_deadline || '').trim(),\n  notes: String(b.notes || '').trim(),\n  status: 'NEW',\n  logged_at: new Date().toISOString(),\n} }];"
+      },
+      "id": "d3000000-0000-0000-0000-000000000002",
+      "name": "Validate invite",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Speaking",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "conference"
+          ],
+          "schema": [
+            {
+              "id": "conference",
+              "displayName": "conference",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_date",
+              "displayName": "event_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "cfp_deadline",
+              "displayName": "cfp_deadline",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "logged_at",
+              "displayName": "logged_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "d3000000-0000-0000-0000-000000000003",
+      "name": "Log to Speaking sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        680,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Speaking pipeline (intake) — SETUP\n\n1. Crea un Google Sheet con tab **Speaking**, intestazioni: `conference | event_date | cfp_deadline | notes | status | logged_at`. `event_date`/`cfp_deadline` in formato YYYY-MM-DD.\n2. Sostituisci `YOUR_GOOGLE_SHEET_ID`, seleziona la tua credenziale Google Sheets.\n3. Attiva. L'URL webhook (Production, dopo l'attivazione): `POST https://<tuo-n8n>/webhook/speaking-invite` con body `{conference, event_date, cfp_deadline, notes}`.\n4. Questo workflow fa solo l'INTAKE — i promemoria scadenza CFP sono nel workflow gemello 'Speaking pipeline - reminders' (stesso foglio, tab Speaking).",
+        "height": 300,
+        "width": 900
+      },
+      "id": "d3000000-0000-0000-0000-000000000004",
+      "name": "SETUP",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        40
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook: New invite": {
+      "main": [
+        [
+          {
+            "node": "Validate invite",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate invite": {
+      "main": [
+        [
+          {
+            "node": "Log to Speaking sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

@@ -1,0 +1,227 @@
+{
+  "id": "ad3e7db4-4a0d-43e6-b4b9-987c5ecfaf0b",
+  "name": "Speaking pipeline - reminders",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "e4000000-0000-0000-0000-000000000001",
+      "name": "Manual Test",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "e4000000-0000-0000-0000-000000000002",
+      "name": "Every 24 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Speaking",
+          "mode": "name"
+        }
+      },
+      "id": "e4000000-0000-0000-0000-000000000003",
+      "name": "Read Speaking sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        460,
+        400
+      ],
+      "notes": "Stesso foglio/tab del workflow 'Speaking pipeline - intake'."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Remind for anything still NEW whose CFP deadline is within the next 7 days\n// (including already-overdue ones - better a late nudge than none).\nconst MSDAY = 86400000;\nconst now = Date.now();\nconst horizon = now + 7 * MSDAY;\nreturn $input.all().filter(item => {\n  const r = item.json;\n  if (String(r.status || '').trim().toUpperCase() !== 'NEW') return false;\n  const d = Date.parse(r.cfp_deadline);\n  if (isNaN(d)) return false;\n  return d <= horizon;\n});"
+      },
+      "id": "e4000000-0000-0000-0000-000000000004",
+      "name": "Due within 7 days",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "email",
+        "operation": "send",
+        "fromEmail": "YOUR_FROM_EMAIL@example.com",
+        "toEmail": "YOUR_EMAIL@example.com",
+        "subject": "=CFP reminder: {{ $json.conference }}",
+        "emailFormat": "text",
+        "text": "=Scadenza CFP: {{ $json.cfp_deadline }}\nEvento: {{ $json.event_date }}\nNote: {{ $json.notes }}\n\n(promemoria automatico dal foglio Speaking)",
+        "options": {}
+      },
+      "id": "e4000000-0000-0000-0000-000000000005",
+      "name": "Send reminder email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        900,
+        400
+      ],
+      "notes": "Serve una credenziale SMTP (Gmail app password o il tuo provider)."
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Speaking",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "REMINDED"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "e4000000-0000-0000-0000-000000000006",
+      "name": "Mark as REMINDED",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1120,
+        400
+      ],
+      "notes": "Cosi' non arriva un promemoria ogni giorno per la stessa scadenza."
+    },
+    {
+      "parameters": {
+        "content": "## Speaking pipeline (reminders) — SETUP\n\n1. Stesso Google Sheet/tab **Speaking** del workflow 'Speaking pipeline - intake'.\n2. Sostituisci `YOUR_GOOGLE_SHEET_ID` in entrambi i nodi Google Sheets.\n3. Crea/seleziona una credenziale **SMTP** in n8n (Credentials -> New -> SMTP - va bene una Gmail App Password) e selezionala nel nodo 'Send reminder email'.\n4. Sostituisci `YOUR_FROM_EMAIL@example.com` e `YOUR_EMAIL@example.com`.\n5. Esegui **Manual Test** per verificare, poi attiva: gira una volta al giorno.\n\n**Comportamento:** manda un promemoria per ogni riga `status=NEW` con `cfp_deadline` entro 7 giorni (anche se gia' scaduta), poi marca la riga `REMINDED` cosi' non la rimanda ogni giorno.",
+        "height": 340,
+        "width": 900
+      },
+      "id": "e4000000-0000-0000-0000-000000000007",
+      "name": "SETUP",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        40
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Test": {
+      "main": [
+        [
+          {
+            "node": "Read Speaking sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 24 Hours": {
+      "main": [
+        [
+          {
+            "node": "Read Speaking sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Speaking sheet": {
+      "main": [
+        [
+          {
+            "node": "Due within 7 days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Due within 7 days": {
+      "main": [
+        [
+          {
+            "node": "Send reminder email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send reminder email": {
+      "main": [
+        [
+          {
+            "node": "Mark as REMINDED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

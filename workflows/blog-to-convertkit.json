@@ -1,0 +1,307 @@
+{
+  "id": "fe5a32d7-30bb-48e2-b575-8f57719be456",
+  "name": "Blog -> ConvertKit draft",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "b1000000-0000-0000-0000-000000000001",
+      "name": "Manual Test",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "b1000000-0000-0000-0000-000000000002",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://lucaberton.com/rss.xml",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "b1000000-0000-0000-0000-000000000003",
+      "name": "Fetch RSS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        480,
+        400
+      ],
+      "notes": "lucaberton.com/rss.xml - verified live, standard RSS 2.0."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Regex-parse the RSS <item> blocks - no XML parser dependency needed.\nconst xml = $input.first().json.data || '';\nif (!xml || xml.length < 200) {\n  throw new Error('RSS feed returned ' + xml.length + ' chars - empty or blocked');\n}\nfunction tag(block, name) {\n  const m = block.match(new RegExp('<' + name + '[^>]*>([\\\\s\\\\S]*?)<\\\\/' + name + '>'));\n  if (!m) return '';\n  return m[1]\n    .replace(/^<!\\[CDATA\\[/, '').replace(/\\]\\]>$/, '')\n    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"').replace(/&#39;/g, \"'\").replace(/&apos;/g, \"'\")\n    .trim();\n}\nconst items = [...xml.matchAll(/<item>([\\s\\S]*?)<\\/item>/g)].map(m => m[1]);\nif (items.length === 0) {\n  throw new Error('0 <item> blocks found - feed layout may have changed');\n}\nreturn items.map(block => ({\n  json: {\n    title: tag(block, 'title'),\n    link: tag(block, 'link'),\n    guid: tag(block, 'guid') || tag(block, 'link'),\n    description: tag(block, 'description'),\n    pubDate: tag(block, 'pubDate'),\n  }\n}));"
+      },
+      "id": "b1000000-0000-0000-0000-000000000004",
+      "name": "Parse RSS items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "BlogLog",
+          "mode": "name"
+        }
+      },
+      "id": "b1000000-0000-0000-0000-000000000005",
+      "name": "Read BlogLog",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        700,
+        560
+      ],
+      "notes": "Tab 'BlogLog', colonna 'guid' = elenco dei post gia' processati."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fetch RSS -> Parse RSS items -> Read BlogLog -> (here). So $input is\n// Read BlogLog's rows (the already-processed guids); the actual RSS items\n// to filter live on the Parse RSS items node instead.\nconst seen = new Set($input.all().map(i => i.json.guid).filter(Boolean));\nreturn $('Parse RSS items').all().filter(i => !seen.has(i.json.guid));"
+      },
+      "id": "b1000000-0000-0000-0000-000000000006",
+      "name": "Keep only NEW posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.convertkit.com/v3/broadcasts",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  api_secret: $env.CONVERTKIT_API_SECRET,\n  subject: $json.title,\n  content: $json.description + '\\n\\n' + $json.link,\n  public: false\n}) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "b1000000-0000-0000-0000-000000000007",
+      "name": "ConvertKit - Create draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1140,
+        400
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "Crea un DRAFT (public:false) - non invia nulla da solo. Lo mandi tu dalla dashboard ConvertKit dopo averlo riletto. CONVERTKIT_API_SECRET dall'ambiente della VPS."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "BlogLog",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "guid"
+          ],
+          "schema": [
+            {
+              "id": "guid",
+              "displayName": "guid",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "link",
+              "displayName": "link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sent_to_convertkit_at",
+              "displayName": "sent_to_convertkit_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "b1000000-0000-0000-0000-000000000008",
+      "name": "Log to BlogLog",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1360,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Blog -> ConvertKit — SETUP\n\n1. Crea un Google Sheet con tab **BlogLog**, intestazioni: `guid | title | link | sent_to_convertkit_at`.\n2. Sostituisci `YOUR_GOOGLE_SHEET_ID` nei 2 nodi Google Sheets e seleziona la tua credenziale Google Sheets.\n3. Sulla VPS/container n8n imposta `CONVERTKIT_API_SECRET` (ConvertKit -> Account Settings -> API Secret, NON la API Key pubblica).\n4. Esegui **Manual Test** per il primo giro (processa tutti i post attuali come 'gia' visti' se non vuoi un invio di massa al primo run - svuota BlogLog solo quando sei pronto).\n5. Attiva: gira ogni 6 ore, crea un DRAFT su ConvertKit per ogni post nuovo — l'invio resta manuale.",
+        "height": 380,
+        "width": 900
+      },
+      "id": "b1000000-0000-0000-0000-000000000009",
+      "name": "SETUP",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        40
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Test": {
+      "main": [
+        [
+          {
+            "node": "Fetch RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 6 Hours": {
+      "main": [
+        [
+          {
+            "node": "Fetch RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch RSS": {
+      "main": [
+        [
+          {
+            "node": "Parse RSS items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse RSS items": {
+      "main": [
+        [
+          {
+            "node": "Read BlogLog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read BlogLog": {
+      "main": [
+        [
+          {
+            "node": "Keep only NEW posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keep only NEW posts": {
+      "main": [
+        [
+          {
+            "node": "ConvertKit - Create draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ConvertKit - Create draft": {
+      "main": [
+        [
+          {
+            "node": "Log to BlogLog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}
