@@ -76,7 +76,7 @@
       "typeVersion": 4.3,
       "position": [
         480,
-        620
+        624
       ],
       "notes": "Il pacchetto community 'ansible' (versionato 11-14+) non ha GitHub Releases (verificato: ansible-community/ansible-build-data ne ha zero) - PyPI e' l'unica fonte di verita' affidabile per questa versione."
     },
@@ -89,7 +89,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        700,
+        920,
         550
       ]
     },
@@ -118,8 +118,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        700,
-        700
+        704,
+        704
       ],
       "onError": "continueRegularOutput",
       "notes": "404 al primo giro (il file non esiste ancora) - gestito nel nodo dopo, non e' un errore."
@@ -133,21 +133,25 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        920,
-        600
+        928,
+        608
       ],
       "notes": "Se non c'e' niente di nuovo, questo nodo restituisce 0 item e tutto quello che segue semplicemente non gira - comportamento normale di n8n, non serve un IF esplicito."
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://claude-bridge:8000/v1/chat/completions",
+        "url": "https://api.anthropic.com/v1/messages",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
-              "name": "Authorization",
-              "value": "=Bearer {{ $env.CLAUDE_BRIDGE_KEY }}"
+              "name": "x-api-key",
+              "value": "YOUR_ANTHROPIC_API_KEY"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
             },
             {
               "name": "content-type",
@@ -157,7 +161,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  model: 'claude-sonnet',\n  messages: [\n    { role: 'system', content: 'Scrivi post per ansiblebyexample.com, il blog Ansible di Luca Berton, nello stile esatto dei suoi articoli esistenti su nuove versioni (es. \"Ansible 14 Community Package RC1 - Whats New and How to Test\"). Formato OBBLIGATORIO: un H1 col titolo, poi sezioni H2 tipo \"Introduction\", \"Whats New\" (con sotto-sezioni H3 se utile), un blocco ```bash``` con i comandi di installazione/verifica, ed eventualmente una tabella markdown se ci sono più componenti/collection coinvolte. Tono pratico e tecnico, terza persona, niente marketing. Rispondi SOLO con JSON valido, nessun altro testo, con questa forma esatta: {\"title\": string, \"description\": string (max 160 caratteri, per lo meta tag), \"category\": uno tra playbooks|modules|roles|inventory|troubleshooting|cloud|cloud-virtualization|security|networking|network|containers|windows|testing|basics|fundamentals|advanced|enterprise|collections|community|best-practices|getting-started|interviews|tools|news (per un annuncio di nuova versione, di solito 'news' e' la scelta giusta), \"tags\": array di 4-7 stringhe minuscole, \"body_markdown\": string (markdown del corpo, SENZA il front matter YAML e SENZA il titolo H1 iniziale visto che verranno aggiunti a parte)}. IMPORTANTE: rispondi SOLO con un oggetto JSON valido. Nessun preambolo, nessuna domanda di chiarimento, nessun blocco markdown, nessuna spiegazione fuori dal JSON. Se qualche informazione manca, fai un'assunzione ragionevole e produci comunque JSON valido.' },\n    { role: 'user', content: 'Nuova versione rilevata.\\n\\nRepo/pacchetto: ' + $json.repo_key + '\\nVersione nuova: ' + $json.version + '\\nVersione precedente conosciuta: ' + ($json.previous_version || 'nessuna (primo giro)') + '\\nURL release: ' + $json.url + '\\n\\nRelease notes / changelog (se disponibili):\\n' + ($json.notes || '(nessuna nota disponibile - PyPI non fornisce changelog inline, menzionalo e rimanda al link)') }\n  ]\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'claude-sonnet-5',\n  max_tokens: 4000,\n  system: 'Scrivi post per ansiblebyexample.com, il blog Ansible di Luca Berton, nello stile esatto dei suoi articoli esistenti su nuove versioni (es. \"Ansible 14 Community Package RC1 - Whats New and How to Test\"). Formato OBBLIGATORIO: un H1 col titolo, poi sezioni H2 tipo \"Introduction\", \"Whats New\" (con sotto-sezioni H3 se utile), un blocco ```bash``` con i comandi di installazione/verifica, ed eventualmente una tabella markdown se ci sono più componenti/collection coinvolte. Tono pratico e tecnico, terza persona, niente marketing. Rispondi SOLO con JSON valido, nessun altro testo, con questa forma esatta: {\"title\": string, \"description\": string (max 160 caratteri, per lo meta tag), \"category\": uno tra playbooks|modules|roles|inventory|troubleshooting|cloud|cloud-virtualization|security|networking|network|containers|windows|testing|basics|fundamentals|advanced|enterprise|collections|community|best-practices|getting-started|interviews|tools|news (per un annuncio di nuova versione, di solito 'news' e' la scelta giusta), \"tags\": array di 4-7 stringhe minuscole, \"body_markdown\": string (markdown del corpo, SENZA il front matter YAML e SENZA il titolo H1 iniziale visto che verranno aggiunti a parte)}',\n  messages: [{\n    role: 'user',\n    content: 'Nuova versione rilevata.\\n\\nRepo/pacchetto: ' + $json.repo_key + '\\nVersione nuova: ' + $json.version + '\\nVersione precedente conosciuta: ' + ($json.previous_version || 'nessuna (primo giro)') + '\\nURL release: ' + $json.url + '\\n\\nRelease notes / changelog (se disponibili):\\n' + ($json.notes || '(nessuna nota disponibile - PyPI non fornisce changelog inline, menzionalo e rimanda al link)')\n  }]\n}) }}",
         "options": {
           "timeout": 90000
         }
@@ -167,14 +171,14 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1140,
-        600
+        1152,
+        608
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "const src = $('Determine new versions').first().json;\nconst response = $json;\n\nfunction getText(resp) {\n  if (!resp) return '';\n  // OpenAI-compatible shape (served by claude-bridge, not Anthropic's own API).\n  return resp.choices?.[0]?.message?.content || '';\n}\n\nconst text = getText(response);\nif (!text) throw new Error('Claude returned no text: ' + (response?.error?.message || JSON.stringify(response).slice(0,300)));\nconst cleaned = text.trim().replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '').trim();\nconst jsonStart = cleaned.indexOf('{');\nconst jsonEnd = cleaned.lastIndexOf('}');\nconst draft = JSON.parse(cleaned.slice(jsonStart, jsonEnd + 1));\n\nconst today = new Date().toISOString().slice(0, 10);\nconst title = String(draft.title || (src.release_name + ' Released')).trim();\nconst filename = title.replace(/[\\\\/:*?\"<>|]/g, '') + '.md';\n\nconst frontmatter = [\n  '---',\n  'title: \"' + title.replace(/\"/g, '\\\\\"') + '\"',\n  'description: \"' + String(draft.description || '').replace(/\"/g, '\\\\\"') + '\"',\n  'author: \"Luca Berton\"',\n  'date: \"' + today + '\"',\n  'category: \"' + (['playbooks', 'modules', 'roles', 'inventory', 'troubleshooting', 'cloud', 'cloud-virtualization', 'security', 'networking', 'network', 'containers', 'windows', 'testing', 'basics', 'fundamentals', 'advanced', 'enterprise', 'collections', 'community', 'best-practices', 'getting-started', 'interviews', 'tools', 'news'].includes(draft.category) ? draft.category : 'news') + '\"',\n  'tags:',\n  ...(draft.tags || ['ansible', 'release']).map(t => '  - \"' + String(t).replace(/\"/g, '\\\\\"') + '\"'),\n  '---',\n].join('\\n');\n\nconst body = '# ' + title + '\\n\\n' + String(draft.body_markdown || '');\nconst fullContent = frontmatter + '\\n\\n' + body;\n\nconst branchSlug = 'ansible-release-' + String(src.repo_key).replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '-' + String(src.version).replace(/[^a-z0-9.]+/gi, '-').toLowerCase();\n\nconst newState = { ...src.full_state, [src.repo_key]: src.version };\n\nreturn [{ json: {\n  filename,\n  filePath: 'src/content/tutorials/' + filename,\n  fileContentBase64: Buffer.from(fullContent, 'utf-8').toString('base64'),\n  branch: branchSlug,\n  prTitle: 'New post: ' + title,\n  prBody: 'Auto-drafted by the Ansible release watch workflow.\\n\\nRepo/package: `' + src.repo_key + '`\\nNew version: `' + src.version + '` (previous: `' + (src.previous_version || 'none') + '`)\\nRelease: ' + src.url + '\\n\\n**Review before merging:**\\n- [ ] fact-check the drafted content against the real release notes\\n- [ ] add a thumbnail (falls back to the default one otherwise)\\n- [ ] adjust tone/length as needed',\n  stateJsonBase64: Buffer.from(JSON.stringify(newState, null, 2), 'utf-8').toString('base64'),\n  state_sha: src.state_sha,\n} }];"
+        "jsCode": "const src = $('Determine new versions').first().json;\nconst response = $json;\n\nfunction getText(resp) {\n  if (!resp) return '';\n  if (Array.isArray(resp.content)) {\n    for (const part of resp.content) {\n      if (typeof part?.text === 'string') return part.text;\n    }\n  }\n  return '';\n}\n\nconst text = getText(response);\nif (!text) throw new Error('Claude returned no text: ' + (response?.error?.message || JSON.stringify(response).slice(0,300)));\nconst cleaned = text.trim().replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '').trim();\nconst jsonStart = cleaned.indexOf('{');\nconst jsonEnd = cleaned.lastIndexOf('}');\nconst draft = JSON.parse(cleaned.slice(jsonStart, jsonEnd + 1));\n\nconst today = new Date().toISOString().slice(0, 10);\nconst title = String(draft.title || (src.release_name + ' Released')).trim();\nconst filename = title.replace(/[\\\\/:*?\"<>|]/g, '') + '.md';\n\nconst frontmatter = [\n  '---',\n  'title: \"' + title.replace(/\"/g, '\\\\\"') + '\"',\n  'description: \"' + String(draft.description || '').replace(/\"/g, '\\\\\"') + '\"',\n  'author: \"Luca Berton\"',\n  'date: \"' + today + '\"',\n  'category: \"' + (['playbooks', 'modules', 'roles', 'inventory', 'troubleshooting', 'cloud', 'cloud-virtualization', 'security', 'networking', 'network', 'containers', 'windows', 'testing', 'basics', 'fundamentals', 'advanced', 'enterprise', 'collections', 'community', 'best-practices', 'getting-started', 'interviews', 'tools', 'news'].includes(draft.category) ? draft.category : 'news') + '\"',\n  'tags:',\n  ...(draft.tags || ['ansible', 'release']).map(t => '  - \"' + String(t).replace(/\"/g, '\\\\\"') + '\"'),\n  '---',\n].join('\\n');\n\nconst body = '# ' + title + '\\n\\n' + String(draft.body_markdown || '');\nconst fullContent = frontmatter + '\\n\\n' + body;\n\nconst branchSlug = 'ansible-release-' + String(src.repo_key).replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '-' + String(src.version).replace(/[^a-z0-9.]+/gi, '-').toLowerCase();\n\nconst newState = { ...src.full_state, [src.repo_key]: src.version };\n\nreturn [{ json: {\n  filename,\n  filePath: 'src/content/tutorials/' + filename,\n  fileContentBase64: Buffer.from(fullContent, 'utf-8').toString('base64'),\n  branch: branchSlug,\n  prTitle: 'New post: ' + title,\n  prBody: 'Auto-drafted by the Ansible release watch workflow.\\n\\nRepo/package: `' + src.repo_key + '`\\nNew version: `' + src.version + '` (previous: `' + (src.previous_version || 'none') + '`)\\nRelease: ' + src.url + '\\n\\n**Review before merging:**\\n- [ ] fact-check the drafted content against the real release notes\\n- [ ] add a thumbnail (falls back to the default one otherwise)\\n- [ ] adjust tone/length as needed',\n  stateJsonBase64: Buffer.from(JSON.stringify(newState, null, 2), 'utf-8').toString('base64'),\n  state_sha: src.state_sha,\n} }];"
       },
       "id": "f1000000-0000-0000-0000-000000000009",
       "name": "Build post + branch",
@@ -182,7 +186,7 @@
       "typeVersion": 2,
       "position": [
         1360,
-        600
+        608
       ]
     },
     {
@@ -210,8 +214,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1580,
-        600
+        1584,
+        608
       ]
     },
     {
@@ -243,8 +247,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1800,
-        600
+        1808,
+        608
       ],
       "onError": "continueRegularOutput",
       "notes": "Se il branch esiste gia' (es. un rerun) GitHub risponde 422 - si continua comunque, il file verra' scritto/aggiornato su quel branch."
@@ -278,8 +282,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        2020,
-        600
+        2032,
+        608
       ],
       "notes": "src/content/tutorials/ - path costruito a pezzi ed encodeURIComponent-ato per gestire spazi/caratteri speciali nel titolo, come nei file esistenti del repo."
     },
@@ -313,7 +317,7 @@
       "typeVersion": 4.3,
       "position": [
         2240,
-        600
+        608
       ]
     },
     {
@@ -345,8 +349,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        2460,
-        600
+        2464,
+        608
       ],
       "notes": "Unico commit diretto su main - non e' contenuto del blog, e' solo il ledger dell'automazione (cosi' non ripropone la stessa versione ogni giorno mentre la PR e' ancora in review)."
     },
@@ -361,8 +365,22 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        240,
-        40
+        816,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 2
+      },
+      "id": "f1000000-0000-0000-0000-00000000001a",
+      "name": "Merge versions",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        700,
+        550
       ]
     }
   ],
@@ -403,7 +421,7 @@
       "main": [
         [
           {
-            "node": "Combine current versions",
+            "node": "Merge versions",
             "type": "main",
             "index": 0
           }
@@ -414,9 +432,9 @@
       "main": [
         [
           {
-            "node": "Combine current versions",
+            "node": "Merge versions",
             "type": "main",
-            "index": 0
+            "index": 1
           }
         ]
       ]
@@ -519,10 +537,22 @@
           }
         ]
       ]
+    },
+    "Merge versions": {
+      "main": [
+        [
+          {
+            "node": "Combine current versions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "binaryMode": "separate"
   },
   "active": false
 }

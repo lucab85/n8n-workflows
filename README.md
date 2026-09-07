@@ -211,6 +211,26 @@ sia il prompt che la validazione lato codice nel workflow a tutta la
 tassonomia reale, con fallback a `'news'` invece di `'fundamentals'`
 per un annuncio di versione.
 
+**Terzo bug reale, stesso giro di test — un errore strutturale di
+n8n, non di prompt:** `ansible-release-watch.json` aveva due nodi HTTP
+Request paralleli (`GitHub - ansible/ansible latest` e
+`PyPI - ansible package`, entrambi partiti dallo stesso trigger)
+collegati DIRETTAMENTE allo stesso nodo Code
+(`Combine current versions`), che li referenzia entrambi per nome
+(`$('GitHub - ...')`, `$('PyPI - ...')`). In n8n, collegare due branch
+parallele così **non le aspetta entrambe** — il nodo target scatta
+alla prima branch che finisce, quindi `Combine current versions`
+partiva prima ancora che `PyPI - ansible package` avesse anche solo
+iniziato, con errore `Node 'PyPI - ansible package' hasn't been
+executed`. Il fix: un nodo **Merge** (`mode: 'append', numberInputs:
+2`) in mezzo, con GitHub collegato al suo input 0 e PyPI al suo input
+1 — non entrambi sullo stesso indice. Solo dopo un Merge n8n aspetta
+davvero dati da entrambi gli input prima di proseguire. Vale come
+promemoria generale: qualunque futuro workflow con branch parallele
+che convergono in un nodo con riferimenti `$('NomeNodo')` va sempre
+attraverso un Merge esplicito, non un collegamento diretto a due a
+uno.
+
 ### Setup Google Sheet (AI Prospect Scout)
 
 Foglio con tab `Prospects`, prima riga con queste intestazioni:
