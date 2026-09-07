@@ -1,0 +1,348 @@
+{
+  "id": "6e81abb1-1bc5-4190-93b3-4ef3fe77636a",
+  "name": "Gmail action triage - 3x daily",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "167e1d0c-679a-4144-9263-b329d1173178",
+      "name": "Manual Test",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        220,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            },
+            {
+              "field": "cronExpression",
+              "expression": "0 13 * * *"
+            },
+            {
+              "field": "cronExpression",
+              "expression": "0 18 * * *"
+            }
+          ]
+        }
+      },
+      "id": "e0c626b2-cb9a-4a42-a64f-a7479f67340c",
+      "name": "08:00 / 13:00 / 18:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        220,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 60,
+        "filters": {
+          "q": "category:personal newer_than:7d -in:spam -in:trash",
+          "readStatus": "both"
+        }
+      },
+      "id": "6d5f72a8-b1b0-43ee-b9b0-6682bd5a0d53",
+      "name": "Get recent personal threads",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        460,
+        420
+      ],
+      "notes": "Select Luca's Gmail OAuth credential after import."
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "get",
+        "threadId": "={{ $json.id }}",
+        "simple": false,
+        "options": {
+          "returnOnlyMessages": false
+        }
+      },
+      "id": "b593c120-9551-44bf-902f-f2d8447467cf",
+      "name": "Get thread details",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        700,
+        420
+      ],
+      "notes": "Fetch full thread context so classification reflects who acted last."
+    },
+    {
+      "parameters": {
+        "jsCode": "const thread = $json;\nconst messages = Array.isArray(thread.messages) ? thread.messages : [];\nconst me = [\n  'luca@lucaberton.com',\n  'luca@lucaberton.it',\n  'luca@mrevolution.eu'\n];\n\nfunction clean(v) {\n  return String(v || '').replace(/\\s+/g, ' ').trim();\n}\nfunction bodyOf(m) {\n  const candidates = [\n    m.textPlain, m.text, m.snippet, m.html, m.textHtml,\n    m.payload?.body?.data\n  ];\n  for (const c of candidates) {\n    if (typeof c === 'string' && c.trim()) return clean(c).slice(0, 3500);\n  }\n  return '';\n}\n\nconst compact = messages.slice(-12).map((m, i) => {\n  const from = clean(m.From || m.from || '');\n  const to = clean(m.To || m.to || '');\n  const subject = clean(m.Subject || m.subject || '');\n  const body = bodyOf(m);\n  const fromMe = me.some(a => from.toLowerCase().includes(a));\n  return {\n    n: i + 1,\n    id: m.id || '',\n    date: m.Date || m.date || m.internalDate || '',\n    from,\n    to,\n    subject,\n    from_me: fromMe,\n    text: body\n  };\n});\n\nconst subject = compact.find(m => m.subject)?.subject || '';\nreturn [{\n  json: {\n    thread_id: thread.id || compact[0]?.threadId || '',\n    subject,\n    messages: compact,\n    current_time: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "6b8a9ded-424c-4bfe-b5f2-f12abbe928ff",
+      "name": "Prepare thread",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "YOUR_ANTHROPIC_API_KEY"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 350, system: \"You classify Luca's Gmail threads into exactly one operational queue.\\nReturn ONLY valid JSON with keys: label, confidence, reason.\\n\\nAllowed label values:\\n- \\\"1 · Oggi\\\": Luca must act today or the item is overdue/time-critical enough to handle now.\\n- \\\"2 · Rispondere\\\": Luca must reply, confirm, send information, make a decision, or otherwise take the next action, but it is not necessarily due today.\\n- \\\"3 · In attesa\\\": Luca has already taken the latest substantive action and the next move belongs to another person/process.\\n- \\\"4 · Follow-up\\\": no immediate reply is required, but Luca must revisit, prepare, analyze, or follow up later.\\n- \\\"NONE\\\": informational, completed, automated notification, newsletter, rejection, duplicate, no meaningful pending action, or too ambiguous.\\n\\nRules:\\n1. Classify the THREAD STATE, not just the latest incoming message.\\n2. Pay special attention to who sent the most recent substantive message. Messages marked from_me=true are Luca's.\\n3. If Luca replied after the request, prefer \\\"3 · In attesa\\\".\\n4. If an external party asked a direct question and Luca has not answered, prefer \\\"2 · Rispondere\\\".\\n5. Use \\\"1 · Oggi\\\" sparingly, only for truly urgent/current items.\\n6. Automated system notifications are normally NONE unless they expose a production failure or concrete action Luca should take; then use \\\"4 · Follow-up\\\" or \\\"1 · Oggi\\\" depending on urgency.\\n7. Do not classify newsletters/promotions as action queues.\\n8. confidence must be a number 0 to 1. Use <0.65 when the thread is genuinely ambiguous.\\n9. Never propose sending, deleting, archiving, or moving email. This workflow only labels.\\n\", messages: [{ role: 'user', content: 'Current time: ' + $json.current_time + '\\nSubject: ' + $json.subject + '\\n\\nTHREAD:\\n' + JSON.stringify($json.messages, null, 2) }] }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "d21898a7-9755-44f0-857d-5eae4e2fb88d",
+      "name": "Claude - classify queue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1180,
+        420
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const src = $('Prepare thread').item.json;\nconst response = $json;\n\nfunction getText(resp) {\n  if (!resp) return '';\n  if (Array.isArray(resp.content)) {\n    for (const p of resp.content) if (typeof p?.text === 'string') return p.text;\n  }\n  if (typeof resp.output_text === 'string') return resp.output_text;\n  return '';\n}\n\nconst map = {\n  '1 · Oggi': 'Label_6',\n  '2 · Rispondere': 'Label_7',\n  '3 · In attesa': 'Label_8',\n  '4 · Follow-up': 'Label_9',\n};\n\nlet out = { label: 'NONE', confidence: 0, reason: 'parse error' };\nlet skip = false;\ntry {\n  const text = getText(response);\n  const start = text.indexOf('{');\n  if (start < 0) throw new Error('No JSON object in model response');\n  out = JSON.parse(text.slice(start));\n} catch (e) {\n  skip = true;\n  out = { label: 'NONE', confidence: 0, reason: String(e?.message || e) };\n}\n\nconst label = Object.prototype.hasOwnProperty.call(map, out.label) ? out.label : (out.label === 'NONE' ? 'NONE' : 'NONE');\nconst confidence = Number(out.confidence);\nif (!Number.isFinite(confidence) || confidence < 0.65) skip = true;\n\nreturn [{\n  json: {\n    thread_id: src.thread_id,\n    subject: src.subject,\n    target_label: label,\n    target_label_id: map[label] || '',\n    confidence: Number.isFinite(confidence) ? confidence : 0,\n    reason: String(out.reason || ''),\n    skip\n  }\n}];"
+      },
+      "id": "47b2696e-6a95-4535-a725-3eb15efeef17",
+      "name": "Parse classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1420,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().filter(i => i.json.skip !== true);"
+      },
+      "id": "38192ee3-b335-471d-9fb3-c45b7dd28aba",
+      "name": "Only confident decisions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1660,
+        420
+      ],
+      "notes": "If model parsing fails or confidence < 0.65, leave existing labels untouched."
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "removeLabels",
+        "threadId": "={{ $json.thread_id }}",
+        "labelIds": [
+          "Label_6",
+          "Label_7",
+          "Label_8",
+          "Label_9"
+        ]
+      },
+      "id": "db4824be-b67c-43d2-a56a-1b3e6d35b33c",
+      "name": "Remove old action labels",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1900,
+        420
+      ],
+      "notes": "Account-specific Gmail label IDs: Label_6=Oggi, Label_7=Rispondere, Label_8=In attesa, Label_9=Follow-up."
+    },
+    {
+      "parameters": {
+        "jsCode": "const cls = $('Parse classification').item.json;\nif (!cls.target_label_id) return [];\nreturn [{ json: cls }];"
+      },
+      "id": "085b97ec-8b56-4e91-a347-0241ae372b7c",
+      "name": "Keep actionable only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2140,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "addLabels",
+        "threadId": "={{ $json.thread_id }}",
+        "labelIds": "={{ [$json.target_label_id] }}"
+      },
+      "id": "2e98577c-f3c7-4cc2-bb09-0c2517b15ff6",
+      "name": "Apply target label",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2380,
+        420
+      ],
+      "notes": "No archive, move, delete, or send action is performed."
+    },
+    {
+      "parameters": {
+        "content": "## Gmail action triage — SETUP\n\nRuns at **08:00, 13:00 and 18:00 Europe/Amsterdam** and re-classifies recent personal Gmail threads into:\n\n- `1 · Oggi` → Label_6\n- `2 · Rispondere` → Label_7\n- `3 · In attesa` → Label_8\n- `4 · Follow-up` → Label_9\n- `NONE` → removes stale action labels and leaves the thread unlabelled\n\n### After import\n1. Select Luca's **Gmail OAuth2** credential in all Gmail nodes.\n2. Replace `YOUR_ANTHROPIC_API_KEY` in the Claude HTTP node (or swap it for your preferred LLM credential/node).\n3. Run **Manual Test** first and inspect a few classifications.\n4. Activate only after the results look right.\n\n### Safety\n- Does **not** send email.\n- Does **not** archive, trash or delete email.\n- Low-confidence/model-error classifications do **not** change labels.\n- Processes up to 60 threads from `category:personal newer_than:7d` per run.\n\nThe four label IDs are account-specific but are not secrets.",
+        "height": 500,
+        "width": 980
+      },
+      "id": "41667255-9475-4ec7-96e8-ded5282c8d55",
+      "name": "SETUP",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        220,
+        -40
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Test": {
+      "main": [
+        [
+          {
+            "node": "Get recent personal threads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "08:00 / 13:00 / 18:00": {
+      "main": [
+        [
+          {
+            "node": "Get recent personal threads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get recent personal threads": {
+      "main": [
+        [
+          {
+            "node": "Get thread details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get thread details": {
+      "main": [
+        [
+          {
+            "node": "Prepare thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare thread": {
+      "main": [
+        [
+          {
+            "node": "Claude - classify queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude - classify queue": {
+      "main": [
+        [
+          {
+            "node": "Parse classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse classification": {
+      "main": [
+        [
+          {
+            "node": "Only confident decisions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Only confident decisions": {
+      "main": [
+        [
+          {
+            "node": "Remove old action labels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove old action labels": {
+      "main": [
+        [
+          {
+            "node": "Keep actionable only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keep actionable only": {
+      "main": [
+        [
+          {
+            "node": "Apply target label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Amsterdam"
+  },
+  "active": false
+}
