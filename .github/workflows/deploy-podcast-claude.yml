@@ -1,0 +1,127 @@
+name: Deploy podcast Claude workflow to n8n
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - workflows/podcast-claude-producer.json
+      - .github/workflows/deploy-podcast-claude.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      N8N_BASE_URL: https://n8n.openempower.com
+      WORKFLOW_FILE: workflows/podcast-claude-producer.json
+      WORKFLOW_NAME: Podcast AI Production Pack — Claude
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check deployment credential
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.N8N_API_KEY }}" ]; then
+            echo "::error::Repository secret N8N_API_KEY is not configured. Create an n8n API key in Settings → n8n API and save it as the GitHub Actions secret N8N_API_KEY."
+            exit 1
+          fi
+
+      - name: Validate workflow JSON
+        run: jq empty "$WORKFLOW_FILE"
+
+      - name: Create or update workflow
+        id: deploy
+        shell: bash
+        env:
+          N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          jq '{name, nodes, connections, settings}' "$WORKFLOW_FILE" > /tmp/workflow.json
+
+          list_response=$(curl --fail-with-body --silent --show-error \
+            "$N8N_BASE_URL/api/v1/workflows?limit=100" \
+            -H "X-N8N-API-KEY: $N8N_API_KEY")
+
+          workflow_id=$(jq -r --arg name "$WORKFLOW_NAME" \
+            '.data[]? | select(.name == $name) | .id' <<<"$list_response" | head -n1)
+
+          if [ -n "$workflow_id" ]; then
+            echo "Updating existing workflow $workflow_id"
+            response=$(curl --fail-with-body --silent --show-error \
+              -X PUT "$N8N_BASE_URL/api/v1/workflows/$workflow_id" \
+              -H "X-N8N-API-KEY: $N8N_API_KEY" \
+              -H "Content-Type: application/json" \
+              --data-binary @/tmp/workflow.json)
+          else
+            echo "Creating workflow"
+            response=$(curl --fail-with-body --silent --show-error \
+              -X POST "$N8N_BASE_URL/api/v1/workflows" \
+              -H "X-N8N-API-KEY: $N8N_API_KEY" \
+              -H "Content-Type: application/json" \
+              --data-binary @/tmp/workflow.json)
+            workflow_id=$(jq -r '.id' <<<"$response")
+          fi
+
+          if [ -z "$workflow_id" ] || [ "$workflow_id" = "null" ]; then
+            echo "::error::n8n did not return a workflow id"
+            echo "$response"
+            exit 1
+          fi
+
+          echo "workflow_id=$workflow_id" >> "$GITHUB_OUTPUT"
+
+      - name: Publish workflow
+        shell: bash
+        env:
+          N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
+          WORKFLOW_ID: ${{ steps.deploy.outputs.workflow_id }}
+        run: |
+          set -euo pipefail
+          status=$(curl --silent --show-error -o /tmp/publish-response.json -w '%{http_code}' \
+            -X POST "$N8N_BASE_URL/api/v1/workflows/$WORKFLOW_ID/publish" \
+            -H "X-N8N-API-KEY: $N8N_API_KEY")
+
+          if [[ "$status" =~ ^2 ]]; then
+            echo "Published workflow"
+          elif [ "$status" = "404" ]; then
+            echo "Publish endpoint unavailable on this n8n version; activation will be attempted directly."
+          else
+            cat /tmp/publish-response.json
+            echo "::error::Publish failed with HTTP $status"
+            exit 1
+          fi
+
+      - name: Activate workflow
+        shell: bash
+        env:
+          N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
+          WORKFLOW_ID: ${{ steps.deploy.outputs.workflow_id }}
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            -X POST "$N8N_BASE_URL/api/v1/workflows/$WORKFLOW_ID/activate" \
+            -H "X-N8N-API-KEY: $N8N_API_KEY" \
+            -o /tmp/activate-response.json
+          jq '{id, name, active}' /tmp/activate-response.json || cat /tmp/activate-response.json
+
+      - name: Verify deployment
+        shell: bash
+        env:
+          N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
+          WORKFLOW_ID: ${{ steps.deploy.outputs.workflow_id }}
+        run: |
+          set -euo pipefail
+          response=$(curl --fail-with-body --silent --show-error \
+            "$N8N_BASE_URL/api/v1/workflows/$WORKFLOW_ID" \
+            -H "X-N8N-API-KEY: $N8N_API_KEY")
+          echo "$response" | jq '{id, name, active, webhook_nodes: [.nodes[] | select(.type == "n8n-nodes-base.webhook") | {name, webhookId, path: .parameters.path}]}'
+          active=$(jq -r '.active' <<<"$response")
+          if [ "$active" != "true" ]; then
+            echo "::error::Workflow exists but is not active"
+            exit 1
+          fi
