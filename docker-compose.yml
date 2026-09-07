@@ -30,10 +30,11 @@ services:
       N8N_PORT: 5678
       WEBHOOK_URL: ${WEBHOOK_URL}
       GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Rome}
-      # Used directly via {{ $env.APIFY_TOKEN }} / {{ $env.OPENAI_API_KEY }} inside
-      # ai-prospect-scout.json's HTTP Request nodes — not n8n credential objects.
+      # Used directly via {{ $env.* }} inside selected workflows.
       APIFY_TOKEN: ${APIFY_TOKEN}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      PODCAST_WEBHOOK_TOKEN: ${PODCAST_WEBHOOK_TOKEN:-}
     ports:
       - "${N8N_PORT_BINDING:-5678}:5678"
     volumes:
