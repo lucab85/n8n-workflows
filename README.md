@@ -22,6 +22,14 @@ gira in produzione.
 | `workflows/speaking-intake.json` | Riceve un invito/CFP via webhook e lo logga su Google Sheets (`status: NEW`) | webhook |
 | `workflows/speaking-reminders.json` | Ogni giorno controlla il foglio Speaking e manda un'email di promemoria per le scadenze CFP entro 7 giorni ancora non gestite | ogni 24 ore |
 | `workflows/ansible-release-watch.json` | Controlla `ansible/ansible` (GitHub Releases) e il pacchetto `ansible` su PyPI; se una versione è cambiata, Claude scrive una bozza di post nello stile di quelli già su `ansiblebyexample.com` e apre una PR nel repo del blog | ogni 24 ore / manuale |
+| `workflows/gmail-action-triage.json` | Legge le thread Gmail recenti, le fa classificare da Claude in 4 code operative (Oggi/Rispondere/In attesa/Follow-up) e applica la label corrispondente — mai invio/archiviazione/cancellazione automatica | 3x al giorno (08/13/18) / manuale |
+| `workflows/podcast-claude-producer.json` | Da un transcript + URL sorgente, Claude genera un intero production pack per l'episodio: cold open, note di montaggio, capitoli, 3-5 short, titoli/descrizione YouTube, concept thumbnail, copy social/newsletter | webhook |
+
+`gmail-action-triage.json` e `podcast-claude-producer.json` sono aggiunte
+tue, non mie — le ho trovate già commesse nel repo (con i relativi
+GitHub Actions di deploy in `.github/workflows/`) mentre lavoravo su
+`ansible-release-watch.json` in parallelo. Non le ho toccate, a parte
+far passare anche la loro chiamata a Claude dal bridge (vedi sotto).
 
 Questi ultimi quattro li ho scritti da zero per il tuo business
 (lucaberton.com — Production AI advisory, non le automazioni hobby dei
@@ -123,9 +131,50 @@ nodo HTTP Request (cercalo con `grep -rn YOUR_ workflows/`):
 | RapidAPI (AeroDataBox) | japow-3-arrival-sequence, swell-event | rapidapi.com, sottoscrivi AeroDataBox |
 | Bland.ai | japow-3-arrival-sequence, swell-event | dashboard Bland.ai → API keys |
 | Apify | swell-event, surfboard-sniper | apify.com → Settings → Integrations |
-| Anthropic (Claude) | garmin-claude-coach, advisory-lead-qualification, ansible-release-watch | console.anthropic.com → API Keys |
+| Gmail | gmail-action-triage | OAuth2, Google Cloud Console |
 | Garmin Connect | garmin-claude-coach (script Python, non il workflow) | il tuo login Garmin normale |
 | SMTP | speaking-reminders | il tuo provider email (es. Gmail App Password) |
+
+### claude-bridge — perché non c'è più una riga "Anthropic (Claude)" qui sopra
+
+Tutti i workflow che usano Claude (garmin-claude-coach,
+advisory-lead-qualification, ansible-release-watch,
+podcast-claude-producer, gmail-action-triage) passano da
+**[claude-bridge](https://github.com/lucab85/claude-bridge)** invece di
+chiamare `api.anthropic.com` direttamente con una API key a pagamento.
+Gira come container nello stesso stack VPS (vedi
+`lucab85/ansible-vps-bootstrap`, `compose/claude-bridge/`), espone
+`http://claude-bridge:8000/v1/chat/completions` in formato
+OpenAI-compatibile, e dentro fa girare la CLI di Claude Code già
+autenticata sull'host — usa la stessa sessione/quota, non una API key
+separata.
+
+Ogni nodo HTTP Request verso Claude in questi 5 workflow ha:
+- `url`: `http://claude-bridge:8000/v1/chat/completions`
+- header `Authorization: Bearer {{ $env.CLAUDE_BRIDGE_KEY }}`
+- body in formato OpenAI (`messages: [{role, content}]`), non più la
+  forma nativa di Anthropic (`system` + `messages` separati,
+  `max_tokens`)
+- i nodi Parse a valle leggono `resp.choices[0].message.content`
+  invece di `resp.content[...].text`
+
+**Compromesso reale, non teorico — verificato con test veri contro il
+bridge prima di riscrivere questi workflow:** la CLI di Claude Code è
+uno strumento agentico, non un endpoint di completions puro. Anche con
+un system prompt che dice esplicitamente "rispondi SOLO con JSON,
+nessuna domanda" può occasionalmente rispondere in modo conversazionale
+invece di produrre JSON (mi è capitato durante i test, risolto solo
+rinforzando ulteriormente il prompt). Ogni nodo Parse a valle ha già un
+fallback `status: ERROR` / `success: false` per quando succede — vale
+la pena controllarli nelle prime esecuzioni reali, specialmente per
+`podcast-claude-producer.json` che chiede uno schema JSON molto più
+grande (quindi più superficie per una deviazione).
+
+Se preferisci l'affidabilità della vera API Anthropic per uno di questi
+workflow, è un cambio localizzato: riporta il nodo HTTP a
+`https://api.anthropic.com/v1/messages` con gli header/body nativi
+(vedi la cronologia git di questi file per la forma esatta) e il nodo
+Parse a leggere `resp.content`.
 
 ### Setup Google Sheet (AI Prospect Scout)
 
@@ -197,7 +246,8 @@ di coaching pronti da usare nel nodo "Ask Claude — coach".
 ### Setup lead qualification (advisory)
 
 1. Google Sheet, tab **Leads**, intestazioni: `name | email | company | message | received_at | status | score | reason | suggested_reply | error`.
-2. `YOUR_ANTHROPIC_API_KEY` nel nodo "Claude - Score lead".
+2. Chiama claude-bridge, non serve una chiave Anthropic — vedi la
+   sezione "claude-bridge" più sopra per `CLAUDE_BRIDGE_KEY`.
 3. Collega il form del sito all'URL webhook (dopo l'attivazione):
    `POST https://<tuo-n8n>/webhook/advisory-lead` con body JSON
    `{name, email, company, message}` — se il tuo form manda altri nomi
@@ -234,7 +284,8 @@ indovinato):**
 1. `GITHUB_TOKEN` in `.env` — Personal Access Token con permesso `repo`
    su **`lucab85/ansiblebyexample.com`** (deve poter creare branch, file
    e pull request).
-2. `YOUR_ANTHROPIC_API_KEY` nel nodo "Claude - draft post".
+2. Chiama claude-bridge, non serve una chiave Anthropic — vedi la
+   sezione "claude-bridge" più sopra per `CLAUDE_BRIDGE_KEY`.
 3. Lo stato (ultima versione vista per ciascuna fonte) vive in
    `automation/ansible-release-watch/state.json` **dentro il repo del
    blog stesso** — non serve nessun Google Sheet o database esterno, e

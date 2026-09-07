@@ -65,17 +65,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "http://claude-bridge:8000/v1/chat/completions",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
-              "name": "x-api-key",
-              "value": "YOUR_ANTHROPIC_API_KEY"
-            },
-            {
-              "name": "anthropic-version",
-              "value": "2023-06-01"
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.CLAUDE_BRIDGE_KEY }}"
             },
             {
               "name": "content-type",
@@ -85,7 +81,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"claude-sonnet-5\",\n  \"max_tokens\": 700,\n  \"system\": \"You are my coach. Every morning you get my overnight recovery (sleep, HRV, resting HR) and yesterday's session. Read how I actually pulled up and rewrite today's plan for it. Be decisive: one clear session, one line on why. If I'm cooked, say so and back it off.\",\n  \"messages\": [ { \"role\": \"user\", \"content\": \"Here is my recent Garmin data as JSON: {{ JSON.stringify($json).replace(/\"/g, '\\\\\"') }}. Give me today's session.\" } ]\n}",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'claude-sonnet',\n  messages: [\n    { role: 'system', content: 'You are my coach. Every morning you get my overnight recovery (sleep, HRV, resting HR) and yesterday\\'s session. Read how I actually pulled up and rewrite today\\'s plan for it. Be decisive: one clear session, one line on why. If I\\'m cooked, say so and back it off.' },\n    { role: 'user', content: 'Here is my recent Garmin data as JSON: ' + JSON.stringify($json).replace(/\"/g, '\\\\\"') + '. Give me today\\'s session.' }\n  ]\n}) }}",
         "options": {}
       },
       "id": "a4claude00000000",

@@ -34,17 +34,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "http://claude-bridge:8000/v1/chat/completions",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
-              "name": "x-api-key",
-              "value": "YOUR_ANTHROPIC_API_KEY"
-            },
-            {
-              "name": "anthropic-version",
-              "value": "2023-06-01"
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.CLAUDE_BRIDGE_KEY }}"
             },
             {
               "name": "content-type",
@@ -54,7 +50,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  model: 'claude-sonnet-5',\n  max_tokens: 500,\n  system: 'Sei l\\'assistente di Luca Berton, Production AI Expert (consulenza enterprise su piattaforme AI, Kubernetes, MLOps, GPU infra, governance/compliance). Valuti se un lead in ingresso e coerente con questo servizio: architettura AI enterprise, non sviluppo software generico, non richieste di formazione base. Rispondi SOLO con JSON valido, nessun altro testo.',\n  messages: [{\n    role: 'user',\n    content: 'LEAD\\n\\nNome: ' + $json.name + '\\nAzienda: ' + $json.company + '\\nEmail: ' + $json.email + '\\nMessaggio: ' + $json.message + '\\n\\nRestituisci: {\"score\": 1-10, \"reason\": \"una frase\", \"suggested_reply\": \"bozza di risposta breve in italiano o inglese a seconda della lingua del messaggio\"}'\n  }]\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'claude-sonnet',\n  messages: [\n    { role: 'system', content: 'Sei l\\'assistente di Luca Berton, Production AI Expert (consulenza enterprise su piattaforme AI, Kubernetes, MLOps, GPU infra, governance/compliance). Valuti se un lead in ingresso e coerente con questo servizio: architettura AI enterprise, non sviluppo software generico, non richieste di formazione base. Rispondi SOLO con JSON valido, nessun altro testo. IMPORTANTE: rispondi SOLO con un oggetto JSON valido. Nessun preambolo, nessuna domanda di chiarimento, nessun blocco markdown, nessuna spiegazione fuori dal JSON. Se qualche informazione manca, fai un'assunzione ragionevole e produci comunque JSON valido.' },\n    { role: 'user', content: 'LEAD\\n\\nNome: ' + $json.name + '\\nAzienda: ' + $json.company + '\\nEmail: ' + $json.email + '\\nMessaggio: ' + $json.message + '\\n\\nRestituisci: {\"score\": 1-10, \"reason\": \"una frase\", \"suggested_reply\": \"bozza di risposta breve in italiano o inglese a seconda della lingua del messaggio\"}' }\n  ]\n}) }}",
         "options": {
           "timeout": 60000
         }
@@ -71,7 +67,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const lead = $('Validate lead').first().json;\nconst response = $json;\n\nfunction getText(resp) {\n  if (!resp) return '';\n  if (Array.isArray(resp.content)) {\n    for (const part of resp.content) {\n      if (typeof part?.text === 'string') return part.text;\n    }\n  }\n  return '';\n}\n\nlet status = 'SCORED';\nlet error = '';\nlet ai = {};\ntry {\n  const text = getText(response);\n  if (!text) throw new Error(response?.error?.message || 'Claude returned no text');\n  const jsonStart = text.indexOf('{');\n  ai = JSON.parse(text.slice(jsonStart));\n} catch (e) {\n  status = 'ERROR';\n  error = String(e?.message || e).slice(0, 300);\n}\n\nlet score = Number(ai.score);\nif (!Number.isFinite(score)) score = null;\n\nreturn [{ json: {\n  name: lead.name,\n  email: lead.email,\n  company: lead.company,\n  message: lead.message,\n  received_at: lead.received_at,\n  status,\n  score,\n  reason: ai.reason || '',\n  suggested_reply: ai.suggested_reply || '',\n  error,\n} }];"
+        "jsCode": "const lead = $('Validate lead').first().json;\nconst response = $json;\n\nfunction getText(resp) {\n  if (!resp) return '';\n  // OpenAI-compatible shape (served by claude-bridge, not Anthropic's own API).\n  return resp.choices?.[0]?.message?.content || '';\n}\n\nlet status = 'SCORED';\nlet error = '';\nlet ai = {};\ntry {\n  const text = getText(response);\n  if (!text) throw new Error(response?.error?.message || 'Claude returned no text');\n  const jsonStart = text.indexOf('{');\n  ai = JSON.parse(text.slice(jsonStart));\n} catch (e) {\n  status = 'ERROR';\n  error = String(e?.message || e).slice(0, 300);\n}\n\nlet score = Number(ai.score);\nif (!Number.isFinite(score)) score = null;\n\nreturn [{ json: {\n  name: lead.name,\n  email: lead.email,\n  company: lead.company,\n  message: lead.message,\n  received_at: lead.received_at,\n  status,\n  score,\n  reason: ai.reason || '',\n  suggested_reply: ai.suggested_reply || '',\n  error,\n} }];"
       },
       "id": "c2000000-0000-0000-0000-000000000004",
       "name": "Parse score",
