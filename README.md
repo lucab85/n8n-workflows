@@ -13,18 +13,40 @@ gira in produzione.
 | `workflows/japow-1-powder-watch.json` | Controlla le previsioni neve di Niseko; se scattano le condizioni (40cm overnight, 3 giorni sotto -10°C, cielo sereno il 4° giorno) propone volo + chalet e apre un sondaggio Telegram | ogni 6 ore / manuale |
 | `workflows/japow-2-lock-it-in.json` | Riceve il voto del sondaggio Telegram e conferma la prenotazione (`status: proposed -> locked`) | webhook Telegram |
 | `workflows/japow-3-arrival-sequence.json` | Traccia il volo in arrivo, prenota il taxi 30 min prima dell'atterraggio e ordina la birra 10 min prima di arrivare allo chalet (via chiamate vocali) | ogni 15 min + webhook posizione |
+| `workflows/swell-event.json` | Controlla le previsioni surf di Uluwatu (Surfline); se il mare "spara" 3+ giorni con vento offshore propone volo + villa su Telegram | ogni 6 ore |
+| `workflows/surfboard-sniper.json` | Cerca tavole da surf su Facebook Marketplace dentro un "buy box" (marca/misura/prezzo/raggio) e avvisa su Telegram quando trova un match nuovo | ogni 30 min |
+| `workflows/garmin-claude-coach.json` | Legge i dati di recovery (sonno, HRV) da Supabase e chiede a Claude un piano di allenamento del giorno | ogni mattina alle 6:00 |
+| `garmin-claude-coach/garmin_daily_pull.py` | Script Python che fa login su Garmin Connect e scrive i dati (attività, sonno, HRV, peso) su Supabase — è il pezzo che alimenta il workflow qui sopra | eseguito da n8n (`executeCommand`) o da cron esterno |
 
-I tre workflow `japow-*` vengono da
-[aaronparton2-sketch/japow-event](https://github.com/aaronparton2-sketch/japow-event)
+Le fonti originali:
+[japow-event](https://github.com/aaronparton2-sketch/japow-event),
+[swell-event](https://github.com/aaronparton2-sketch/swell-event),
+[surfboard-sniper](https://github.com/aaronparton2-sketch/surfboard-sniper),
+[garmin-claude-coach](https://github.com/aaronparton2-sketch/garmin-claude-coach)
 — li ho controllati nodo per nodo prima di importarli (nessun codice
 offuscato, nessun endpoint di exfiltrazione, i segreti passano tutti dal
-sistema di credenziali di n8n) e integrati qui insieme a quello che già
-girava sull'istanza.
+sistema di credenziali di n8n o da variabili d'ambiente) e integrati qui
+insieme a quello che già girava sull'istanza.
 
 **Nessun segreto è incluso in questo repo.** Ogni file `workflows/*.json`
 è stato ripulito da `id` interni, project id, timestamp e riferimenti a
 credenziali specifiche dell'istanza — è un export pulito, riutilizzabile
 su qualunque installazione n8n.
+
+### Un file era rotto alla fonte
+
+`swell-event.json`, così come pubblicato nel repo originale, non si
+importava: le sue `connections` puntavano a due nodi ("Book flights
+(browser agent)" e "Check inbox: flight confirmed") che non esistono nel
+file — probabilmente pezzi rimossi durante la stesura del template. Ho
+verificato che quel ramo non avesse nessun collegamento in ingresso (un
+vicolo cieco, mai raggiungibile in esecuzione) e che il resto del flusso
+raggiunga comunque il tracking del volo tramite un altro nodo
+("Confirmed?"), quindi ho rimosso il collegamento pendente invece di
+inventarmi un'implementazione. **Il workflow importato quindi si ferma
+dopo l'invio dei voli via email — prenotazione volo e controllo casella
+di posta restano da implementare a mano** (serve un agente
+browser/automazione email che qui non è incluso).
 
 ## Farlo girare da solo
 
@@ -42,13 +64,6 @@ n8n sarà su `http://localhost:5678` (o sull'host che hai messo in
 creare l'account owner.
 
 ### Importare i workflow
-
-```bash
-docker compose exec n8n n8n import:workflow --separate --input=/tmp/import
-```
-
-Prima però devi copiare i file dentro il container, dato che il volume
-non li monta di default:
 
 ```bash
 docker cp workflows/. $(docker compose ps -q n8n):/tmp/import
@@ -69,21 +84,29 @@ dalla UI una volta configurate le credenziali.
 
 ## Credenziali da configurare
 
-Tutto quello che non è nella tabella qui sotto va nel file `.env`
-(vedi `.env.example`): `APIFY_TOKEN` e `OPENAI_API_KEY` sono letti
-direttamente dall'ambiente del container (`{{ $env.APIFY_TOKEN }}` nei
-nodi HTTP Request), non da credenziali n8n.
+Quello che segue va nel file `.env` (vedi `.env.example`): letti
+direttamente dall'ambiente del container, non da credenziali n8n.
+
+| Variabile | Usata da |
+|---|---|
+| `APIFY_TOKEN` | AI Prospect Scout (`{{ $env.APIFY_TOKEN }}` nei nodi HTTP Request) |
+| `OPENAI_API_KEY` | AI Prospect Scout |
 
 Tutto il resto è una **credenziale n8n** da creare dalla UI
-(*Credentials → New*) e selezionare nei nodi che la usano:
+(*Credentials → New*) e selezionare nei nodi che la usano, oppure un
+token già inserito come placeholder direttamente nell'URL/header del
+nodo HTTP Request (cercalo con `grep -rn YOUR_ workflows/`):
 
 | Servizio | Usato da | Dove ottenerla |
 |---|---|---|
 | Google Sheets | AI Prospect Scout | OAuth2 o service account, Google Cloud Console |
-| Telegram (bot) | tutti e 3 i `japow-*` | [@BotFather](https://t.me/BotFather) su Telegram |
-| Supabase | tutti e 3 i `japow-*` | Project Settings → API, sul tuo progetto Supabase |
-| RapidAPI (AeroDataBox) | `japow-3-arrival-sequence` | rapidapi.com, sottoscrivi AeroDataBox |
-| Bland.ai | `japow-3-arrival-sequence` | dashboard Bland.ai → API keys |
+| Telegram (bot) | japow-*, swell-event, surfboard-sniper | [@BotFather](https://t.me/BotFather) su Telegram |
+| Supabase | japow-*, surfboard-sniper, garmin-claude-coach | Project Settings → API, sul tuo progetto Supabase |
+| RapidAPI (AeroDataBox) | japow-3-arrival-sequence, swell-event | rapidapi.com, sottoscrivi AeroDataBox |
+| Bland.ai | japow-3-arrival-sequence, swell-event | dashboard Bland.ai → API keys |
+| Apify | swell-event, surfboard-sniper | apify.com → Settings → Integrations |
+| Anthropic (Claude) | garmin-claude-coach | console.anthropic.com → API Keys |
+| Garmin Connect | garmin-claude-coach (script Python, non il workflow) | il tuo login Garmin normale |
 
 ### Setup Google Sheet (AI Prospect Scout)
 
@@ -105,6 +128,40 @@ del repo di partenza. Colonne minime usate dai workflow: `status`,
 `chalet_name`, `chalet_lat`, `chalet_lng`, `chalet_nightly`,
 `beers_ordered_at`.
 
+### Setup tabella Supabase (surfboard-sniper)
+
+Tabella `surfboard_listings` — esegui lo schema SQL del
+[repo originale](https://github.com/aaronparton2-sketch/surfboard-sniper/blob/main/supabase/schema.sql)
+prima di attivare. Il "buy box" (marca, misura, prezzo, città, raggio) si
+edita direttamente nel nodo Code **"Match buy box"** del workflow.
+
+### Setup Garmin → Claude coach
+
+Questo workflow ha due metà: uno **script Python** che fa il lavoro
+pesante (login Garmin + scrittura su Supabase) e il **workflow n8n**
+che legge da Supabase e chiede il piano a Claude.
+
+```bash
+cd garmin-claude-coach
+pip install garminconnect requests
+cp .env.example .env      # poi compilalo
+python garmin_daily_pull.py --login     # una tantum, gestisce anche l'MFA
+python garmin_daily_pull.py --dry-run --days 3   # verifica senza scrivere
+```
+
+Poi esegui `schema.sql` su Supabase per creare le tabelle
+(`garmin_activities`, `garmin_sleep`, `garmin_daily_summary`,
+`garmin_weigh_ins`, ecc.).
+
+Il nodo **"Run daily pull"** nel workflow n8n (`executeCommand`) lancia
+lo script con `python /path/to/garmin-claude-coach/garmin_daily_pull.py`
+— il path è un placeholder, va aggiornato con dove hai clonato questo
+repo. **Attenzione:** l'immagine `n8nio/n8n` di questo `docker-compose.yml`
+non ha Python installato — o lo esegui con un cron esterno al container
+(più semplice), o costruisci un'immagine n8n custom con Python +
+`garminconnect` dentro. `PROMPTS.md` nella stessa cartella ha 18 prompt
+di coaching pronti da usare nel nodo "Ask Claude — coach".
+
 ### Webhook da esporre (japow-2, japow-3)
 
 Se vuoi che Telegram e il tracker di posizione (OwnTracks / iOS
@@ -117,9 +174,12 @@ esposti dai workflow:
 
 ## Cosa NON fa questo repo
 
-- Non configura Telegram/Supabase/Apify/OpenAI/RapidAPI/Bland.ai per te —
-  quelle sono chiavi personali, vanno create e inserite a mano.
+- Non configura Telegram/Supabase/Apify/OpenAI/Anthropic/RapidAPI/Bland.ai/Garmin
+  per te — quelle sono chiavi e credenziali personali, vanno create e
+  inserite a mano.
 - Non attiva i workflow — restano `active: false` finché non li accendi
   tu dalla UI, dopo aver verificato che le credenziali siano a posto.
 - `ai-prospect-scout.json` non fa scraping né invio automatico su
   LinkedIn — prepara solo il messaggio, l'invio resta manuale.
+- `swell-event.json` non prenota voli né controlla la posta in automatico
+  (vedi sopra) — si ferma all'invio delle opzioni di volo via email.

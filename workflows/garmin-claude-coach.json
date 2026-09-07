@@ -1,0 +1,178 @@
+{
+  "id": "4c0ca40e-7844-49a0-9709-dd3d0151c1e4",
+  "name": "Garmin → Claude — daily pull + morning coach",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * *"
+            }
+          ]
+        }
+      },
+      "id": "a1sched000000000",
+      "name": "Every morning 6:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        220,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "command": "python /path/to/garmin-claude-coach/garmin_daily_pull.py"
+      },
+      "id": "a2pull0000000000",
+      "name": "Run daily pull",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        460,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=YOUR_SUPABASE_URL/rest/v1/garmin_sleep?select=*&order=sleep_date.desc&limit=14",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_SERVICE_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_SUPABASE_SERVICE_KEY"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a3read0000000000",
+      "name": "Read recent recovery (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "YOUR_ANTHROPIC_API_KEY"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-5\",\n  \"max_tokens\": 700,\n  \"system\": \"You are my coach. Every morning you get my overnight recovery (sleep, HRV, resting HR) and yesterday's session. Read how I actually pulled up and rewrite today's plan for it. Be decisive: one clear session, one line on why. If I'm cooked, say so and back it off.\",\n  \"messages\": [ { \"role\": \"user\", \"content\": \"Here is my recent Garmin data as JSON: {{ JSON.stringify($json).replace(/\"/g, '\\\\\"') }}. Give me today's session.\" } ]\n}",
+        "options": {}
+      },
+      "id": "a4claude00000000",
+      "name": "Ask Claude — coach",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        340
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "a5send0000000000",
+      "name": "Send me the plan  (add SMS / email node)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1180,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Garmin → Claude — daily pull + morning coach\n\n**What this does:** every morning it runs the pull (fresh Garmin data → Supabase), reads your last 14 nights, asks Claude to write today's session off your real recovery, then hands it to you.\n\n**Set up (all placeholders → your own):**\n1. **Run daily pull** — point the command at where you cloned this repo (`python .../garmin_daily_pull.py`). Or run the pull on its own schedule and delete this node.\n2. **Read recent recovery** — replace `YOUR_SUPABASE_URL` + `YOUR_SUPABASE_SERVICE_KEY`. Add more tables (activities, hrv) as extra HTTP nodes if you want.\n3. **Ask Claude** — drop in `YOUR_ANTHROPIC_API_KEY`. Swap the model for whatever you have access to.\n4. **Send me the plan** — replace this No-Op with a **Twilio SMS** or **Gmail** node so it texts/emails you.\n\nStarts inactive. Test with **Execute Workflow** before you switch it on.\n\nNothing here holds a secret — fill in your own before running.",
+        "height": 360,
+        "width": 420,
+        "color": 4
+      },
+      "id": "a6note0000000000",
+      "name": "Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        220,
+        460
+      ]
+    }
+  ],
+  "connections": {
+    "Every morning 6:00": {
+      "main": [
+        [
+          {
+            "node": "Run daily pull",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run daily pull": {
+      "main": [
+        [
+          {
+            "node": "Read recent recovery (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read recent recovery (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Ask Claude — coach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask Claude — coach": {
+      "main": [
+        [
+          {
+            "node": "Send me the plan  (add SMS / email node)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}
