@@ -1,0 +1,532 @@
+{
+  "id": "e19dd05a-3724-4153-a7bd-8a8c81826924",
+  "name": "Ansible release watch -> blog PR",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "f1000000-0000-0000-0000-000000000001",
+      "name": "Manual Test",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "f1000000-0000-0000-0000-000000000002",
+      "name": "Every 24 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.github.com/repos/ansible/ansible/releases/latest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.GITHUB_TOKEN }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "f1000000-0000-0000-0000-000000000003",
+      "name": "GitHub - ansible/ansible latest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        480,
+        480
+      ],
+      "notes": "ansible/ansible-core NON esiste come repo separato su GitHub - ansible/ansible E' il sorgente di ansible-core (release vere: v2.21.x). Verificato via API prima di costruire questo workflow."
+    },
+    {
+      "parameters": {
+        "url": "https://pypi.org/pypi/ansible/json",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "f1000000-0000-0000-0000-000000000004",
+      "name": "PyPI - ansible package",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        480,
+        620
+      ],
+      "notes": "Il pacchetto community 'ansible' (versionato 11-14+) non ha GitHub Releases (verificato: ansible-community/ansible-build-data ne ha zero) - PyPI e' l'unica fonte di verita' affidabile per questa versione."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Explicit references so it doesn't matter which HTTP node finished first.\nconst gh = $('GitHub - ansible/ansible latest').first().json;\nconst pypi = $('PyPI - ansible package').first().json;\n\nreturn [\n  {\n    json: {\n      repo_key: 'ansible/ansible',\n      source: 'github-release',\n      version: gh.tag_name || null,\n      release_name: gh.name || gh.tag_name || '',\n      notes: (gh.body || '').slice(0, 6000),\n      url: gh.html_url || ('https://github.com/ansible/ansible/releases/tag/' + (gh.tag_name || '')),\n    },\n  },\n  {\n    json: {\n      repo_key: 'ansible (pypi package)',\n      source: 'pypi',\n      version: (pypi.info || {}).version || null,\n      release_name: 'Ansible ' + ((pypi.info || {}).version || ''),\n      notes: '',\n      url: 'https://pypi.org/project/ansible/' + (((pypi.info || {}).version) || '') + '/',\n    },\n  },\n];"
+      },
+      "id": "f1000000-0000-0000-0000-000000000005",
+      "name": "Combine current versions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.github.com/repos/lucab85/ansiblebyexample.com/contents/automation/ansible-release-watch/state.json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.GITHUB_TOKEN }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "f1000000-0000-0000-0000-000000000006",
+      "name": "Get state file",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        700,
+        700
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "404 al primo giro (il file non esiste ancora) - gestito nel nodo dopo, non e' un errore."
+    },
+    {
+      "parameters": {
+        "jsCode": "// State file lives at automation/ansible-release-watch/state.json in the\n// blog repo itself - no external DB needed, and every change to it is a\n// visible git commit.\nconst stateResp = $('Get state file').first().json;\nlet state = {};\nlet stateSha = null;\nif (stateResp && !stateResp.message && stateResp.content) {\n  try {\n    state = JSON.parse(Buffer.from(stateResp.content, 'base64').toString('utf-8'));\n    stateSha = stateResp.sha || null;\n  } catch (e) {\n    state = {};\n  }\n}\n\nconst current = $('Combine current versions').all().map(i => i.json);\nconst changed = current.filter(c => c.version && state[c.repo_key] !== c.version);\n\nreturn changed.map(c => ({ json: { ...c, previous_version: state[c.repo_key] || null, full_state: state, state_sha: stateSha } }));"
+      },
+      "id": "f1000000-0000-0000-0000-000000000007",
+      "name": "Determine new versions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        600
+      ],
+      "notes": "Se non c'e' niente di nuovo, questo nodo restituisce 0 item e tutto quello che segue semplicemente non gira - comportamento normale di n8n, non serve un IF esplicito."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "YOUR_ANTHROPIC_API_KEY"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'claude-sonnet-5',\n  max_tokens: 4000,\n  system: 'Scrivi post per ansiblebyexample.com, il blog Ansible di Luca Berton, nello stile esatto dei suoi articoli esistenti su nuove versioni (es. \"Ansible 14 Community Package RC1 - Whats New and How to Test\"). Formato OBBLIGATORIO: un H1 col titolo, poi sezioni H2 tipo \"Introduction\", \"Whats New\" (con sotto-sezioni H3 se utile), un blocco ```bash``` con i comandi di installazione/verifica, ed eventualmente una tabella markdown se ci sono più componenti/collection coinvolte. Tono pratico e tecnico, terza persona, niente marketing. Rispondi SOLO con JSON valido, nessun altro testo, con questa forma esatta: {\"title\": string, \"description\": string (max 160 caratteri, per lo meta tag), \"category\": uno tra fundamentals|collections|advanced, \"tags\": array di 4-7 stringhe minuscole, \"body_markdown\": string (markdown del corpo, SENZA il front matter YAML e SENZA il titolo H1 iniziale visto che verranno aggiunti a parte)}',\n  messages: [{\n    role: 'user',\n    content: 'Nuova versione rilevata.\\n\\nRepo/pacchetto: ' + $json.repo_key + '\\nVersione nuova: ' + $json.version + '\\nVersione precedente conosciuta: ' + ($json.previous_version || 'nessuna (primo giro)') + '\\nURL release: ' + $json.url + '\\n\\nRelease notes / changelog (se disponibili):\\n' + ($json.notes || '(nessuna nota disponibile - PyPI non fornisce changelog inline, menzionalo e rimanda al link)')\n  }]\n}) }}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "f1000000-0000-0000-0000-000000000008",
+      "name": "Claude - draft post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1140,
+        600
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const src = $('Determine new versions').first().json;\nconst response = $json;\n\nfunction getText(resp) {\n  if (!resp) return '';\n  if (Array.isArray(resp.content)) {\n    for (const part of resp.content) {\n      if (typeof part?.text === 'string') return part.text;\n    }\n  }\n  return '';\n}\n\nconst text = getText(response);\nif (!text) throw new Error('Claude returned no text: ' + (response?.error?.message || JSON.stringify(response).slice(0,300)));\nconst jsonStart = text.indexOf('{');\nconst draft = JSON.parse(text.slice(jsonStart));\n\nconst today = new Date().toISOString().slice(0, 10);\nconst title = String(draft.title || (src.release_name + ' Released')).trim();\nconst filename = title.replace(/[\\\\/:*?\"<>|]/g, '') + '.md';\n\nconst frontmatter = [\n  '---',\n  'title: \"' + title.replace(/\"/g, '\\\\\"') + '\"',\n  'description: \"' + String(draft.description || '').replace(/\"/g, '\\\\\"') + '\"',\n  'author: \"Luca Berton\"',\n  'date: \"' + today + '\"',\n  'category: \"' + (draft.category || 'fundamentals') + '\"',\n  'tags:',\n  ...(draft.tags || ['ansible', 'release']).map(t => '  - \"' + String(t).replace(/\"/g, '\\\\\"') + '\"'),\n  '---',\n].join('\\n');\n\nconst body = '# ' + title + '\\n\\n' + String(draft.body_markdown || '');\nconst fullContent = frontmatter + '\\n\\n' + body;\n\nconst branchSlug = 'ansible-release-' + String(src.repo_key).replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '-' + String(src.version).replace(/[^a-z0-9.]+/gi, '-').toLowerCase();\n\nconst newState = { ...src.full_state, [src.repo_key]: src.version };\n\nreturn [{ json: {\n  filename,\n  filePath: 'src/content/tutorials/' + filename,\n  fileContentBase64: Buffer.from(fullContent, 'utf-8').toString('base64'),\n  branch: branchSlug,\n  prTitle: 'New post: ' + title,\n  prBody: 'Auto-drafted by the Ansible release watch workflow.\\n\\nRepo/package: `' + src.repo_key + '`\\nNew version: `' + src.version + '` (previous: `' + (src.previous_version || 'none') + '`)\\nRelease: ' + src.url + '\\n\\n**Review before merging:**\\n- [ ] fact-check the drafted content against the real release notes\\n- [ ] add a thumbnail (falls back to the default one otherwise)\\n- [ ] adjust tone/length as needed',\n  stateJsonBase64: Buffer.from(JSON.stringify(newState, null, 2), 'utf-8').toString('base64'),\n  state_sha: src.state_sha,\n} }];"
+      },
+      "id": "f1000000-0000-0000-0000-000000000009",
+      "name": "Build post + branch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.github.com/repos/lucab85/ansiblebyexample.com/git/ref/heads/main",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.GITHUB_TOKEN }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "f1000000-0000-0000-0000-00000000000a",
+      "name": "Get main branch SHA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1580,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/lucab85/ansiblebyexample.com/git/refs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.GITHUB_TOKEN }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ref: 'refs/heads/' + $('Build post + branch').first().json.branch, sha: $json.object.sha }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "f1000000-0000-0000-0000-00000000000b",
+      "name": "Create branch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1800,
+        600
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "Se il branch esiste gia' (es. un rerun) GitHub risponde 422 - si continua comunque, il file verra' scritto/aggiornato su quel branch."
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.github.com/repos/lucab85/ansiblebyexample.com/contents/src/content/tutorials/{{ encodeURIComponent($('Build post + branch').first().json.filename) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.GITHUB_TOKEN }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ message: 'Add post: ' + $('Build post + branch').first().json.prTitle, content: $('Build post + branch').first().json.fileContentBase64, branch: $('Build post + branch').first().json.branch }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "f1000000-0000-0000-0000-00000000000c",
+      "name": "Create post file",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2020,
+        600
+      ],
+      "notes": "src/content/tutorials/ - path costruito a pezzi ed encodeURIComponent-ato per gestire spazi/caratteri speciali nel titolo, come nei file esistenti del repo."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/lucab85/ansiblebyexample.com/pulls",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.GITHUB_TOKEN }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ title: $('Build post + branch').first().json.prTitle, head: $('Build post + branch').first().json.branch, base: 'main', body: $('Build post + branch').first().json.prBody }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "f1000000-0000-0000-0000-00000000000d",
+      "name": "Create PR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2240,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "https://api.github.com/repos/lucab85/ansiblebyexample.com/contents/automation/ansible-release-watch/state.json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.GITHUB_TOKEN }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify(Object.assign({ message: 'chore: update ansible-release-watch state', content: $('Build post + branch').first().json.stateJsonBase64, branch: 'main' }, $('Build post + branch').first().json.state_sha ? { sha: $('Build post + branch').first().json.state_sha } : {})) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "f1000000-0000-0000-0000-00000000000e",
+      "name": "Update state file",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2460,
+        600
+      ],
+      "notes": "Unico commit diretto su main - non e' contenuto del blog, e' solo il ledger dell'automazione (cosi' non ripropone la stessa versione ogni giorno mentre la PR e' ancora in review)."
+    },
+    {
+      "parameters": {
+        "content": "## Ansible release watch -> blog PR — SETUP\n\n**Cosa traccia (verificato prima di scrivere il workflow):**\n- `ansible/ansible` su GitHub (e' il sorgente di ansible-core - `ansible/ansible-core` NON esiste come repo separato)\n- pacchetto `ansible` su PyPI (11.x/12.x/13.x/14.x - non ha GitHub Releases, PyPI e' l'unica fonte affidabile)\n\n**Variabili d'ambiente (VPS/container n8n):**\n- `GITHUB_TOKEN` — Personal Access Token con permesso `repo` su `lucab85/ansiblebyexample.com` (branch, file, pull request)\n\n**Nel nodo 'Claude - draft post':**\n- sostituisci `YOUR_ANTHROPIC_API_KEY`\n\n**Stato:** salvato in `automation/ansible-release-watch/state.json` DENTRO il repo del blog stesso — nessun Google Sheet o DB esterno. Il primo giro (file non esiste) crea sia il file di stato che, se una versione risulta \"nuova\", una PR.\n\n**Flusso:** ogni versione cambiata genera UN branch + UNA PR separata con un post bozza scritto da Claude nello stile esatto degli articoli esistenti del blog (frontmatter YAML incluso). Il contenuto NON viene mai mergiato automaticamente — lo rivedi e fai merge tu. Solo l'aggiornamento del file di stato va dritto su `main` (non e' contenuto, e' solo il registro di cosa e' gia' stato processato).\n\n**Non testato end-to-end contro il repo vero** (avrebbe significato aprire branch/PR reali sul tuo blog senza permesso) — la struttura e' stata validata importandola in n8n, e ogni endpoint GitHub/PyPI usato e' stato verificato manualmente con curl prima di scrivere il nodo. Testalo con **Manual Test** su un repo di prova prima di puntarlo al vero `ansiblebyexample.com`, o quantomeno guarda con attenzione la prima PR che apre.\n\n**Espansione ai repo satellite (collection):** aggiungi altre coppie 'HTTP Request -> Combine current versions' per ogni `ansible-collections/<nome>` che vuoi seguire (quelle usano GitHub Releases normalmente, come `ansible/ansible`) — la logica di confronto/stato/PR sotto non cambia.",
+        "height": 560,
+        "width": 1100
+      },
+      "id": "f1000000-0000-0000-0000-00000000000f",
+      "name": "SETUP",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        40
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Test": {
+      "main": [
+        [
+          {
+            "node": "GitHub - ansible/ansible latest",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "PyPI - ansible package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 24 Hours": {
+      "main": [
+        [
+          {
+            "node": "GitHub - ansible/ansible latest",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "PyPI - ansible package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GitHub - ansible/ansible latest": {
+      "main": [
+        [
+          {
+            "node": "Combine current versions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PyPI - ansible package": {
+      "main": [
+        [
+          {
+            "node": "Combine current versions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine current versions": {
+      "main": [
+        [
+          {
+            "node": "Get state file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get state file": {
+      "main": [
+        [
+          {
+            "node": "Determine new versions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Determine new versions": {
+      "main": [
+        [
+          {
+            "node": "Claude - draft post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude - draft post": {
+      "main": [
+        [
+          {
+            "node": "Build post + branch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build post + branch": {
+      "main": [
+        [
+          {
+            "node": "Get main branch SHA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get main branch SHA": {
+      "main": [
+        [
+          {
+            "node": "Create branch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create branch": {
+      "main": [
+        [
+          {
+            "node": "Create post file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create post file": {
+      "main": [
+        [
+          {
+            "node": "Create PR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create PR": {
+      "main": [
+        [
+          {
+            "node": "Update state file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

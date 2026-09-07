@@ -21,6 +21,7 @@ gira in produzione.
 | `workflows/advisory-lead-qualification.json` | Riceve un lead dal form del sito via webhook, lo fa valutare da Claude (fit per consulenza enterprise AI, score 1-10 + bozza di risposta) e lo scrive su Google Sheets | webhook |
 | `workflows/speaking-intake.json` | Riceve un invito/CFP via webhook e lo logga su Google Sheets (`status: NEW`) | webhook |
 | `workflows/speaking-reminders.json` | Ogni giorno controlla il foglio Speaking e manda un'email di promemoria per le scadenze CFP entro 7 giorni ancora non gestite | ogni 24 ore |
+| `workflows/ansible-release-watch.json` | Controlla `ansible/ansible` (GitHub Releases) e il pacchetto `ansible` su PyPI; se una versione è cambiata, Claude scrive una bozza di post nello stile di quelli già su `ansiblebyexample.com` e apre una PR nel repo del blog | ogni 24 ore / manuale |
 
 Questi ultimi quattro li ho scritti da zero per il tuo business
 (lucaberton.com — Production AI advisory, non le automazioni hobby dei
@@ -122,7 +123,7 @@ nodo HTTP Request (cercalo con `grep -rn YOUR_ workflows/`):
 | RapidAPI (AeroDataBox) | japow-3-arrival-sequence, swell-event | rapidapi.com, sottoscrivi AeroDataBox |
 | Bland.ai | japow-3-arrival-sequence, swell-event | dashboard Bland.ai → API keys |
 | Apify | swell-event, surfboard-sniper | apify.com → Settings → Integrations |
-| Anthropic (Claude) | garmin-claude-coach, advisory-lead-qualification | console.anthropic.com → API Keys |
+| Anthropic (Claude) | garmin-claude-coach, advisory-lead-qualification, ansible-release-watch | console.anthropic.com → API Keys |
 | Garmin Connect | garmin-claude-coach (script Python, non il workflow) | il tuo login Garmin normale |
 | SMTP | speaking-reminders | il tuo provider email (es. Gmail App Password) |
 
@@ -218,6 +219,50 @@ di coaching pronti da usare nel nodo "Ask Claude — coach".
    giorni, poi marca la riga `REMINDED` così non te la rimanda ogni
    giorno.
 
+### Setup Ansible release watch -> blog PR
+
+**Cosa traccia (verificato con curl prima di scrivere il workflow, non
+indovinato):**
+- `ansible/ansible` su GitHub — **`ansible/ansible-core` non esiste come
+  repo separato**: `ansible/ansible` è di fatto il sorgente di
+  ansible-core, e le sue GitHub Releases sono quelle vere (es. `v2.21.3`).
+- il pacchetto `ansible` su PyPI (quello versionato 11/12/13/14...) —
+  **non ha GitHub Releases** (controllato `ansible-community/ansible-build-data`:
+  zero release pubblicate lì), quindi l'unica fonte affidabile è
+  `pypi.org/pypi/ansible/json` → `info.version`.
+
+1. `GITHUB_TOKEN` in `.env` — Personal Access Token con permesso `repo`
+   su **`lucab85/ansiblebyexample.com`** (deve poter creare branch, file
+   e pull request).
+2. `YOUR_ANTHROPIC_API_KEY` nel nodo "Claude - draft post".
+3. Lo stato (ultima versione vista per ciascuna fonte) vive in
+   `automation/ansible-release-watch/state.json` **dentro il repo del
+   blog stesso** — non serve nessun Google Sheet o database esterno, e
+   ogni cambio di stato è un commit visibile.
+4. Il contenuto vero (il post) arriva sempre via **pull request** — non
+   viene mai mergiato in automatico. Solo l'aggiornamento del file di
+   stato va dritto su `main` (non è contenuto editoriale, è il registro
+   di cosa è già stato processato, altrimenti la stessa versione
+   verrebbe riproposta ogni giorno finché la PR non è mergiata).
+5. Frontmatter e struttura del post modellati su un articolo reale già
+   pubblicato (`Ansible 14 Community Package RC1 — Whats New and How
+   to Test.md`) — stesso schema YAML (`title/description/author/date/category/tags`),
+   stessa struttura H1→H2/H3.
+6. **Non testato end-to-end contro il repo vero** — avrebbe significato
+   aprire branch/PR reali sul tuo blog senza permesso. Ho invece: (a)
+   verificato con curl ogni endpoint GitHub/PyPI usato, (b) testato la
+   logica di confronto-versioni e di costruzione file/branch fuori da
+   n8n con dati reali (e trovato/corretto due bug così: un pezzo di URL
+   che perdeva il segmento `tutorials/`, e i tag numerici tipo "2.22"
+   che senza virgolette in YAML diventano numeri invece di stringhe),
+   (c) importato la struttura in n8n per validarla. Guarda con
+   attenzione la prima PR che apre prima di fidarti del resto.
+7. **Espansione ai repo satellite (collection):** aggiungi altre coppie
+   "HTTP Request → Combine current versions" per ogni
+   `ansible-collections/<nome>` che vuoi seguire (quelle usano GitHub
+   Releases normalmente, come `ansible/ansible`) — la logica di
+   confronto/stato/PR sotto non cambia.
+
 ### Webhook da esporre (japow-2, japow-3, advisory-lead-qualification, speaking-intake)
 
 Se vuoi che Telegram, il tracker di posizione (OwnTracks / iOS
@@ -245,6 +290,9 @@ Shortcuts) e il form del sito raggiungano l'istanza, `WEBHOOK_URL` in
   draft, l'invio è sempre una tua decisione manuale.
 - `advisory-lead-qualification.json` non risponde mai al lead — scrive
   solo score e bozza di risposta nel foglio.
+- `ansible-release-watch.json` non merge mai il post da solo — apre
+  sempre una PR, il merge (e la revisione dei fatti) restano tuoi.
+  Solo l'aggiornamento del file di stato va dritto su `main`.
 - Non c'è nessuna automazione per iscrizioni/recensioni sui corsi
   (Coursera/Udemy/Pluralsight/Educative) — quelle piattaforme non
   espongono un'API pubblica affidabile per un singolo instructor, quindi
