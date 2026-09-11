@@ -10,7 +10,7 @@
       "typeVersion": 1,
       "position": [
         240,
-        560
+        480
       ]
     },
     {
@@ -30,12 +30,67 @@
       "typeVersion": 1.2,
       "position": [
         240,
-        400
+        640
       ]
     },
     {
       "parameters": {
-        "url": "https://api.github.com/repos/ansible/ansible/releases/latest",
+        "jsCode": "// Every \"thing\" this workflow watches for new releases, one item each -\n// ansible-core, the community `ansible` PyPI package, and each tracked\n// collection. Adding a collection is a one-line addition here; nothing\n// downstream needs to change (Normalize version / Get changelog excerpt /\n// Combine current versions all branch on `kind`, and everything after that\n// is already generic per-item).\n//\n// tagPrefix: most ansible-collections repos tag releases with the bare\n// semver (matches the Galaxy version exactly, e.g. \"13.4.0\"), but a few\n// prefix the git tag with \"v\" (e.g. google.cloud, cisco.ios -> \"v1.14.0\").\n// Verified individually against the real GitHub tags before adding each\n// collection here - getting this wrong just 404s the changelog fetch for\n// that one collection (degrades to \"no changelog excerpt\", not a failure).\nconst collections = [\n  ['community.general', ''],\n  ['ansible.posix', ''],\n  ['community.crypto', ''],\n  ['kubernetes.core', ''],\n  ['community.docker', ''],\n  ['amazon.aws', ''],\n  ['google.cloud', 'v'],\n  ['community.mysql', ''],\n  ['community.postgresql', ''],\n  ['community.windows', ''],\n  ['ansible.windows', ''],\n  ['community.vmware', ''],\n  ['cisco.ios', 'v'],\n];\n\nconst targets = [\n  { kind: 'ansible-core', key: 'ansible/ansible' },\n  { kind: 'community-package', key: 'ansible (pypi package)' },\n  ...collections.map(([fqcn, tagPrefix]) => {\n    const [galaxyNamespace, galaxyName] = fqcn.split('.');\n    return {\n      kind: 'collection',\n      key: fqcn,\n      githubOwner: 'ansible-collections',\n      githubRepo: fqcn,\n      galaxyNamespace,\n      galaxyName,\n      tagPrefix,\n    };\n  }),\n];\n\nreturn targets.map(json => ({ json }));"
+      },
+      "id": "f1000000-0000-0000-0000-000000000020",
+      "name": "Target list",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        560
+      ],
+      "notes": "Ansible-core + the community 'ansible' PyPI package + 13 of the most-used ansible-collections repos (community.general, ansible.posix, community.crypto, kubernetes.core, community.docker, amazon.aws, google.cloud, community.mysql, community.postgresql, community.windows, ansible.windows, community.vmware, cisco.ios). azure.azcollection was checked and does not exist at ansible-collections/azure.azcollection (or any variant found) - excluded rather than guessed."
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.kind === 'ansible-core' ? 'https://api.github.com/repos/ansible/ansible/releases/latest' : $json.kind === 'community-package' ? 'https://pypi.org/pypi/ansible/json' : 'https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/index/' + $json.galaxyNamespace + '/' + $json.galaxyName + '/' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.kind === 'ansible-core' ? ('Bearer ' + $env.GITHUB_TOKEN) : '' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "f1000000-0000-0000-0000-000000000021",
+      "name": "Get latest version",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        720,
+        560
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "Galaxy's API is used for every collection (not GitHub Releases) because a couple of the tracked ones - kubernetes.core, community.mysql - only tag releases on GitHub without creating a Release object, so /releases/latest 404s for them even though they publish normally. Verified individually with curl before adding each collection. No Accept header here on purpose: galaxy.ansible.com returns 406 if sent 'application/vnd.github+json' (confirmed with curl) - GitHub and PyPI both work fine with no Accept header too, so it's just omitted rather than made conditional."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// runOnceForEachItem - $json here is this item's response from \"Get latest\n// version\" (GitHub release, PyPI JSON, or Galaxy collection metadata,\n// depending on kind); the target descriptor that produced it comes from the\n// paired item on \"Target list\", not from $json.\nconst target = $('Target list').item.json;\nconst resp = $json;\n\nlet version = null;\nlet release_name = '';\nlet url = '';\n\nif (target.kind === 'ansible-core') {\n  version = resp.tag_name || null;\n  release_name = resp.name || resp.tag_name || '';\n  url = resp.html_url || ('https://github.com/ansible/ansible/releases/tag/' + (resp.tag_name || ''));\n} else if (target.kind === 'community-package') {\n  version = (resp.info || {}).version || null;\n  release_name = 'Ansible ' + (version || '');\n  url = 'https://pypi.org/project/ansible/' + (version || '') + '/';\n} else {\n  // Galaxy, not GitHub Releases - some collections (e.g. kubernetes.core,\n  // community.mysql) only tag releases on GitHub without creating a Release\n  // object, so /releases/latest 404s for them even though they publish\n  // normally. Galaxy's API is the one version source that works uniformly\n  // for every collection regardless of that.\n  version = (resp.highest_version || {}).version || null;\n  release_name = target.key + ' ' + (version || '');\n  url = 'https://galaxy.ansible.com/ui/repo/published/' + target.galaxyNamespace + '/' + target.galaxyName + '/';\n}\n\nreturn { json: { ...target, version, release_name, url } };"
+      },
+      "id": "f1000000-0000-0000-0000-000000000022",
+      "name": "Normalize version",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.kind === 'ansible-core' ? ('https://api.github.com/repos/ansible/ansible/contents/changelogs/CHANGELOG-v' + ($json.version ? $json.version.replace(/^v/, '').split('.').slice(0,2).join('.') : '') + '.rst?ref=' + $json.version) : $json.kind === 'community-package' ? ('https://api.github.com/repos/ansible-community/ansible-build-data/contents/' + ($json.version ? $json.version.split('.')[0] : '') + '/CHANGELOG-v' + ($json.version ? $json.version.split('.')[0] : '') + '.rst?ref=main') : ('https://api.github.com/repos/' + $json.githubOwner + '/' + $json.githubRepo + '/contents/CHANGELOG.rst?ref=' + (($json.tagPrefix || '') + $json.version)) }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -53,106 +108,29 @@
           "timeout": 30000
         }
       },
-      "id": "f1000000-0000-0000-0000-000000000003",
-      "name": "GitHub - ansible/ansible latest",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        480,
-        480
-      ],
-      "notes": "ansible/ansible-core NON esiste come repo separato su GitHub - ansible/ansible E' il sorgente di ansible-core (release vere: v2.21.x). Verificato via API prima di costruire questo workflow."
-    },
-    {
-      "parameters": {
-        "url": "https://pypi.org/pypi/ansible/json",
-        "options": {
-          "timeout": 30000
-        }
-      },
-      "id": "f1000000-0000-0000-0000-000000000004",
-      "name": "PyPI - ansible package",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        480,
-        624
-      ],
-      "notes": "Il pacchetto community 'ansible' (versionato 11-14+) non ha GitHub Releases (verificato: ansible-community/ansible-build-data ne ha zero) - PyPI e' l'unica fonte di verita' affidabile per questa versione."
-    },
-    {
-      "parameters": {
-        "url": "=https://api.github.com/repos/ansible/ansible/contents/changelogs/CHANGELOG-v{{ $json.tag_name ? $json.tag_name.replace(/^v/, '').split('.').slice(0,2).join('.') : '' }}.rst?ref={{ $json.tag_name }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $env.GITHUB_TOKEN }}"
-            },
-            {
-              "name": "Accept",
-              "value": "application/vnd.github+json"
-            }
-          ]
-        },
-        "options": {
-          "timeout": 30000
-        }
-      },
-      "id": "f1000000-0000-0000-0000-000000000010",
+      "id": "f1000000-0000-0000-0000-000000000023",
       "name": "Get changelog excerpt",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        620,
-        480
+        1200,
+        560
       ],
       "onError": "continueRegularOutput",
-      "notes": "Il release body di ansible/ansible non contiene i bugfix veri, solo un link al file changelogs/CHANGELOG-v<major.minor>.rst - lo recuperiamo qui (path derivato dal tag_name) cosi' Claude ha voci concrete da riassumere invece di scrivere paragrafi generici. Se il file non esiste (404, naming diverso in futuro) si continua comunque senza - vedi 'Combine current versions'."
+      "notes": "Same file per target regardless of kind - CHANGELOG.rst at the release tag (collections), CHANGELOG-v<major.minor>.rst at the release tag (ansible-core), or ansible-build-data's CHANGELOG-v<major>.rst on main (the community package). For collections this MUST be ?ref=<tag>, not ?ref=main/master - main's CHANGELOG.rst is just a placeholder pointing at 'the release branch's version-specific file' (verified with curl against community.general). 404 (wrong tag guess, renamed file, etc.) is tolerated - see 'Combine current versions'."
     },
     {
       "parameters": {
-        "url": "=https://api.github.com/repos/ansible-community/ansible-build-data/contents/{{ ($json.info && $json.info.version) ? $json.info.version.split('.')[0] : '' }}/CHANGELOG-v{{ ($json.info && $json.info.version) ? $json.info.version.split('.')[0] : '' }}.rst?ref=main",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $env.GITHUB_TOKEN }}"
-            },
-            {
-              "name": "Accept",
-              "value": "application/vnd.github+json"
-            }
-          ]
-        },
-        "options": {
-          "timeout": 30000
-        }
-      },
-      "id": "f1000000-0000-0000-0000-000000000011",
-      "name": "Get community changelog",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        620,
-        624
-      ],
-      "onError": "continueRegularOutput",
-      "notes": "PyPI non fornisce changelog inline - ansible-community/ansible-build-data/<major>/CHANGELOG-v<major>.rst e' l'unica fonte per sapere quali collection sono cambiate in questa versione della community package (es. bump di infinidat.infinibox 1.8.4->1.8.5). File per MAJOR version, non per minor come ansible-core. Se non esiste (404) si continua senza - vedi 'Combine current versions'."
-    },
-    {
-      "parameters": {
-        "jsCode": "// Explicit references so it doesn't matter which HTTP node finished first.\nconst gh = $('GitHub - ansible/ansible latest').first().json;\nconst pypi = $('PyPI - ansible package').first().json;\nconst changelogResp = $('Get changelog excerpt').first().json;\nconst communityChangelogResp = $('Get community changelog').first().json;\n\n// Neither the ansible-core release body nor the PyPI JSON API embed the\n// actual list of changes - both just point at (or omit entirely) a versioned\n// changelog file. Pull out just the section for this exact version (between\n// its 'vX.Y.Z\\n===...' heading and the next one, optionally cut off earlier\n// at stopAtRe) so Claude has concrete items to summarize instead of writing\n// generic filler.\nfunction extractChangelogSection(resp, version, stopAtRe) {\n  if (!resp || resp.message || !resp.content) return '';\n  let text;\n  try {\n    text = Buffer.from(resp.content, 'base64').toString('utf-8');\n  } catch (e) {\n    return '';\n  }\n  version = String(version || '').replace(/^v/, '');\n  if (!version) return '';\n  const headingRe = new RegExp('^v' + version.replace(/\\./g, '\\\\.') + '\\\\n=+\\\\n', 'm');\n  const startMatch = headingRe.exec(text);\n  if (!startMatch) return '';\n  let rest = text.slice(startMatch.index + startMatch[0].length);\n  const nextHeadingRe = /\\nv[0-9]+\\.[0-9]+\\.[0-9]+\\n=+\\n/;\n  const nextMatch = nextHeadingRe.exec(rest);\n  let section = nextMatch ? rest.slice(0, nextMatch.index) : rest;\n  if (stopAtRe) {\n    const stopMatch = stopAtRe.exec(section);\n    if (stopMatch) section = section.slice(0, stopMatch.index);\n  }\n  return section.trim().slice(0, 4000);\n}\n\nconst changelogSection = extractChangelogSection(changelogResp, gh.tag_name);\nconst baseNotes = (gh.body || '').slice(0, 2000);\nconst notes = changelogSection\n  ? baseNotes + '\\n\\nSpecific changes in this exact version (from the versioned changelog file):\\n' + changelogSection\n  : baseNotes;\n\nconst pypiVersion = (pypi.info || {}).version || null;\n// The 'Unchanged Collections' section that follows is a giant per-collection\n// list with zero informational value here - cut it before that heading.\nconst communityChangelogSection = extractChangelogSection(communityChangelogResp, pypiVersion, /\\nUnchanged Collections\\n-+\\n/);\n\nreturn [\n  {\n    json: {\n      repo_key: 'ansible/ansible',\n      source: 'github-release',\n      version: gh.tag_name || null,\n      release_name: gh.name || gh.tag_name || '',\n      notes: notes.slice(0, 6000),\n      url: gh.html_url || ('https://github.com/ansible/ansible/releases/tag/' + (gh.tag_name || '')),\n    },\n  },\n  {\n    json: {\n      repo_key: 'ansible (pypi package)',\n      source: 'pypi',\n      version: pypiVersion,\n      release_name: 'Ansible ' + (pypiVersion || ''),\n      notes: (communityChangelogSection\n        ? 'What actually changed in this exact community package version (from ansible-community/ansible-build-data):\\n' + communityChangelogSection\n        : '(no changelog data available for this version - PyPI does not provide one inline, mention that and link to the release)').slice(0, 6000),\n      url: 'https://pypi.org/project/ansible/' + (pypiVersion || '') + '/',\n    },\n  },\n];"
+        "mode": "runOnceForEachItem",
+        "jsCode": "// runOnceForEachItem - $json here is this item's changelog file response\n// (from \"Get changelog excerpt\"); the version/url/etc. from \"Normalize\n// version\" comes via the paired item, same reasoning as there.\nconst target = $('Normalize version').item.json;\nconst changelogResp = $json;\n\n// Neither GitHub's release body, PyPI's JSON API, nor Galaxy's collection\n// metadata embed the actual list of changes - all three just point at (or\n// omit entirely) a changelog file. Pull out just the section for this exact\n// version (between its 'vX.Y.Z\\n===...' heading and the next one, optionally\n// cut off earlier at stopAtRe) so Claude has concrete items to summarize\n// instead of writing generic filler. Same heading format everywhere here -\n// ansible-core, ansible-build-data, and every ansible-collections repo all\n// generate their changelog with antsibull-changelog.\nfunction extractChangelogSection(resp, version, stopAtRe) {\n  if (!resp || resp.message || !resp.content) return '';\n  let text;\n  try {\n    text = Buffer.from(resp.content, 'base64').toString('utf-8');\n  } catch (e) {\n    return '';\n  }\n  version = String(version || '').replace(/^v/, '');\n  if (!version) return '';\n  const headingRe = new RegExp('^v' + version.replace(/\\./g, '\\\\.') + '\\\\n=+\\\\n', 'm');\n  const startMatch = headingRe.exec(text);\n  if (!startMatch) return '';\n  let rest = text.slice(startMatch.index + startMatch[0].length);\n  const nextHeadingRe = /\\nv[0-9]+\\.[0-9]+\\.[0-9]+\\n=+\\n/;\n  const nextMatch = nextHeadingRe.exec(rest);\n  let section = nextMatch ? rest.slice(0, nextMatch.index) : rest;\n  if (stopAtRe) {\n    const stopMatch = stopAtRe.exec(section);\n    if (stopMatch) section = section.slice(0, stopMatch.index);\n  }\n  return section.trim().slice(0, 4000);\n}\n\nconst changelogSection = extractChangelogSection(\n  changelogResp,\n  target.version,\n  target.kind === 'community-package' ? /\\nUnchanged Collections\\n-+\\n/ : null\n);\n\nlet notes;\nif (target.kind === 'ansible-core') {\n  const releaseResp = $('Get latest version').item.json;\n  const baseNotes = (releaseResp.body || '').slice(0, 2000);\n  notes = changelogSection\n    ? baseNotes + '\\n\\nSpecific changes in this exact version (from the versioned changelog file):\\n' + changelogSection\n    : baseNotes;\n} else if (target.kind === 'community-package') {\n  notes = changelogSection\n    ? 'What actually changed in this exact community package version (from ansible-community/ansible-build-data):\\n' + changelogSection\n    : '(no changelog data available for this version - PyPI does not provide one inline, mention that and link to the release)';\n} else {\n  notes = changelogSection\n    ? 'Specific changes in this exact version (from the collection\\'s own changelog):\\n' + changelogSection\n    : '(no changelog excerpt available for this version - mention that and link to the release)';\n}\n\nreturn {\n  json: {\n    repo_key: target.key,\n    source: target.kind,\n    version: target.version,\n    release_name: target.release_name,\n    notes: notes.slice(0, 6000),\n    url: target.url,\n  },\n};"
       },
       "id": "f1000000-0000-0000-0000-000000000005",
       "name": "Combine current versions",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        920,
-        550
+        1440,
+        560
       ]
     },
     {
@@ -180,8 +158,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        704,
-        704
+        1680,
+        560
       ],
       "onError": "continueRegularOutput",
       "notes": "404 al primo giro (il file non esiste ancora) - gestito nel nodo dopo, non e' un errore."
@@ -195,10 +173,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        928,
-        608
+        1920,
+        560
       ],
-      "notes": "Se non c'e' niente di nuovo, questo nodo restituisce 0 item e tutto quello che segue semplicemente non gira - comportamento normale di n8n, non serve un IF esplicito."
+      "notes": "Se non c'e' niente di nuovo, questo nodo restituisce 0 item e tutto quello che segue semplicemente non gira - comportamento normale di n8n, non serve un IF esplicito. Con 15 target invece di 2, e' normale che piu' di uno cambi nello stesso giorno - vedi 'Merge state updates' per come questo viene gestito senza perdere aggiornamenti."
     },
     {
       "parameters": {
@@ -219,7 +197,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  model: 'claude-sonnet',\n  messages: [\n    { role: 'system', content: \"IMPORTANTE - LINGUA: scrivi l'intero contenuto dell'output (title, description, tags, body_markdown) in INGLESE, non in italiano — il blog ansiblebyexample.com e' in lingua inglese, indipendentemente dalla lingua di queste istruzioni. Scrivi post per ansiblebyexample.com, il blog Ansible di Luca Berton, nello stile esatto dei suoi articoli esistenti su nuove versioni (es. \\\"Ansible 14 Community Package RC1 - Whats New and How to Test\\\"). Formato OBBLIGATORIO: un H1 col titolo, poi sezioni H2 tipo \\\"Introduction\\\", \\\"Whats New\\\" (con sotto-sezioni H3 se utile), un blocco ```bash``` con i comandi di installazione/verifica, ed eventualmente una tabella markdown se ci sono più componenti/collection coinvolte. Tono pratico e tecnico, terza persona, niente marketing. USA I DETTAGLI CONCRETI forniti sotto (voci di bugfix/changelog specifiche, nomi di moduli/plugin, numeri di issue/PR, checksum, dimensioni file) invece di scrivere paragrafi generici tipo 'e' una release di manutenzione, nessuna nuova funzionalita' prevista' - quel tipo di frase e' accettabile SOLO se le note fornite sono davvero vuote o generiche. Se le note contengono un elenco di bugfix, riportali (anche sinteticamente, in elenco puntato) invece di riassumerli in una frase vaga. Se si tratta del pacchetto community 'ansible' e le note elencano quali collection sono cambiate rispetto alla versione precedente, apri il corpo dell'articolo spiegando ESATTAMENTE quello (es: questa versione e' identica alla precedente tranne per il bump di una collection da una versione all'altra, e il bug specifico che quel bump risolve) PRIMA delle istruzioni di installazione - e' l'informazione che il lettore cerca per prima, esattamente come fanno i veri annunci di rilascio sul forum ufficiale Ansible. Rispondi SOLO con JSON valido, nessun altro testo, con questa forma esatta: {\\\"title\\\": string, \\\"description\\\": string (max 160 caratteri, per lo meta tag), \\\"category\\\": uno tra playbooks|modules|roles|inventory|troubleshooting|cloud|cloud-virtualization|security|networking|network|containers|windows|testing|basics|fundamentals|advanced|enterprise|collections|community|best-practices|getting-started|interviews|tools|news (per un annuncio di nuova versione, di solito la scelta giusta e news), \\\"tags\\\": array di 4-7 stringhe minuscole, \\\"body_markdown\\\": string (markdown del corpo, SENZA il front matter YAML e SENZA il titolo H1 iniziale visto che verranno aggiunti a parte). IMPORTANTE: rispondi SOLO con un oggetto JSON valido. Nessun preambolo, nessuna domanda di chiarimento, nessun blocco markdown, nessuna spiegazione fuori dal JSON. Se qualche informazione manca, fai una assunzione ragionevole e produci comunque JSON valido.\" },\n    { role: 'user', content: 'Nuova versione rilevata.\\n\\nRepo/pacchetto: ' + $json.repo_key + '\\nVersione nuova: ' + $json.version + '\\nVersione precedente conosciuta: ' + ($json.previous_version || 'nessuna (primo giro)') + '\\nURL release: ' + $json.url + '\\n\\nRelease notes / changelog (se disponibili):\\n' + ($json.notes || '(nessuna nota disponibile - PyPI non fornisce changelog inline, menzionalo e rimanda al link)') }\n  ]\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'claude-sonnet',\n  messages: [\n    { role: 'system', content: \"IMPORTANTE - LINGUA: scrivi l'intero contenuto dell'output (title, description, tags, body_markdown) in INGLESE, non in italiano \\u2014 il blog ansiblebyexample.com e' in lingua inglese, indipendentemente dalla lingua di queste istruzioni. Scrivi post per ansiblebyexample.com, il blog Ansible di Luca Berton, nello stile esatto dei suoi articoli esistenti su nuove versioni (es. \\\"Ansible 14 Community Package RC1 - Whats New and How to Test\\\"). Formato OBBLIGATORIO: un H1 col titolo, poi sezioni H2 tipo \\\"Introduction\\\", \\\"Whats New\\\" (con sotto-sezioni H3 se utile), un blocco ```bash``` con i comandi di installazione/verifica, ed eventualmente una tabella markdown se ci sono pi\\u00f9 componenti/collection coinvolte. Tono pratico e tecnico, terza persona, niente marketing. USA I DETTAGLI CONCRETI forniti sotto (voci di bugfix/changelog specifiche, nomi di moduli/plugin, numeri di issue/PR, checksum, dimensioni file) invece di scrivere paragrafi generici tipo 'e' una release di manutenzione, nessuna nuova funzionalita' prevista' - quel tipo di frase e' accettabile SOLO se le note fornite sono davvero vuote o generiche. Se le note contengono un elenco di bugfix, riportali (anche sinteticamente, in elenco puntato) invece di riassumerli in una frase vaga. Se si tratta del pacchetto community 'ansible' e le note elencano quali collection sono cambiate rispetto alla versione precedente, apri il corpo dell'articolo spiegando ESATTAMENTE quello (es: questa versione e' identica alla precedente tranne per il bump di una collection da una versione all'altra, e il bug specifico che quel bump risolve) PRIMA delle istruzioni di installazione - e' l'informazione che il lettore cerca per prima, esattamente come fanno i veri annunci di rilascio sul forum ufficiale Ansible. Se si tratta di una collection (es. community.general, kubernetes.core), apri il corpo dell'articolo dicendo chiaramente per QUALE collection e' questo aggiornamento e a cosa serve in una frase, dato che il lettore potrebbe non conoscerla. Rispondi SOLO con JSON valido, nessun altro testo, con questa forma esatta: {\\\"title\\\": string, \\\"description\\\": string (max 160 caratteri, per lo meta tag), \\\"category\\\": uno tra playbooks|modules|roles|inventory|troubleshooting|cloud|cloud-virtualization|security|networking|network|containers|windows|testing|basics|fundamentals|advanced|enterprise|collections|community|best-practices|getting-started|interviews|tools|news (per un annuncio di nuova versione, di solito la scelta giusta e news oppure collections se si tratta di una singola collection), \\\"tags\\\": array di 4-7 stringhe minuscole, \\\"body_markdown\\\": string (markdown del corpo, SENZA il front matter YAML e SENZA il titolo H1 iniziale visto che verranno aggiunti a parte). IMPORTANTE: rispondi SOLO con un oggetto JSON valido. Nessun preambolo, nessuna domanda di chiarimento, nessun blocco markdown, nessuna spiegazione fuori dal JSON. Se qualche informazione manca, fai una assunzione ragionevole e produci comunque JSON valido.\" },\n    { role: 'user', content: 'Nuova versione rilevata.\\n\\nRepo/pacchetto: ' + $json.repo_key + '\\nVersione nuova: ' + $json.version + '\\nVersione precedente conosciuta: ' + ($json.previous_version || 'nessuna (primo giro)') + '\\nURL release: ' + $json.url + '\\n\\nRelease notes / changelog (se disponibili):\\n' + ($json.notes || '(nessuna nota disponibile - PyPI non fornisce changelog inline, menzionalo e rimanda al link)') }\n  ]\n}) }}",
         "options": {
           "timeout": 90000
         }
@@ -229,8 +207,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1152,
-        608
+        2160,
+        560
       ],
       "onError": "continueRegularOutput",
       "retryOnFail": true,
@@ -240,15 +218,15 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "// runOnceForEachItem - this runs once PER changed resource (ansible/ansible,\n// the pypi community package, and any future collections), not once for the\n// whole batch. It used to default to \"run once for all items\" with $json /\n// .first(), which silently collapsed every run down to just the first\n// changed item and dropped the rest (e.g. the pypi community package never\n// got a PR because ansible/ansible always came first).\nconst src = $('Determine new versions').item.json;\nconst response = $json;\n\nfunction getText(resp) {\n  if (!resp) return '';\n  // OpenAI-compatible shape (served by claude-bridge, not Anthropic's own API).\n  return resp.choices?.[0]?.message?.content || '';\n}\n\nconst text = getText(response);\nif (!text) throw new Error('Claude returned no text: ' + (response?.error?.message || JSON.stringify(response).slice(0, 2000)));\nconst cleaned = text.trim().replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '').trim();\nconst jsonStart = cleaned.indexOf('{');\nconst jsonEnd = cleaned.lastIndexOf('}');\n\n// Claude's JSON often contains real (unescaped) newlines/tabs inside string\n// values - e.g. a fenced code block or a paragraph break inside\n// body_markdown - which is invalid per strict JSON (control characters must\n// be escaped) even though it looks fine to a human. Got longer and more\n// likely to hit now that responses carry real multi-paragraph content\n// instead of generic filler. Walk the text tracking whether we're inside a\n// quoted string (respecting backslash-escapes) and only escape control\n// characters found there - untouched outside strings, so real JSON\n// structural whitespace is unaffected.\nfunction sanitizeJsonControlChars(str) {\n  let inString = false;\n  let escapedNext = false;\n  let out = '';\n  for (let i = 0; i < str.length; i++) {\n    const ch = str[i];\n    if (!inString) {\n      if (ch === '\"') inString = true;\n      out += ch;\n      continue;\n    }\n    if (escapedNext) {\n      out += ch;\n      escapedNext = false;\n      continue;\n    }\n    if (ch === '\\\\') {\n      out += ch;\n      escapedNext = true;\n    } else if (ch === '\"') {\n      out += ch;\n      inString = false;\n    } else if (ch === '\\n') {\n      out += '\\\\n';\n    } else if (ch === '\\r') {\n      out += '\\\\r';\n    } else if (ch === '\\t') {\n      out += '\\\\t';\n    } else {\n      out += ch;\n    }\n  }\n  return out;\n}\n\nconst draft = JSON.parse(sanitizeJsonControlChars(cleaned.slice(jsonStart, jsonEnd + 1)));\n\nconst today = new Date().toISOString().slice(0, 10);\nconst title = String(draft.title || (src.release_name + ' Released')).trim();\nconst filename = title.replace(/[\\\\/:*?\"<>|]/g, '') + '.md';\n\nconst frontmatter = [\n  '---',\n  'title: \"' + title.replace(/\"/g, '\\\\\"') + '\"',\n  'description: \"' + String(draft.description || '').replace(/\"/g, '\\\\\"') + '\"',\n  'author: \"Luca Berton\"',\n  'date: \"' + today + '\"',\n  'category: \"' + (['playbooks', 'modules', 'roles', 'inventory', 'troubleshooting', 'cloud', 'cloud-virtualization', 'security', 'networking', 'network', 'containers', 'windows', 'testing', 'basics', 'fundamentals', 'advanced', 'enterprise', 'collections', 'community', 'best-practices', 'getting-started', 'interviews', 'tools', 'news'].includes(draft.category) ? draft.category : 'news') + '\"',\n  'tags:',\n  ...(draft.tags || ['ansible', 'release']).map(t => '  - \"' + String(t).replace(/\"/g, '\\\\\"') + '\"'),\n  '---',\n].join('\\n');\n\nconst body = '# ' + title + '\\n\\n' + String(draft.body_markdown || '');\nconst fullContent = frontmatter + '\\n\\n' + body;\n\nconst branchSlug = 'ansible-release-' + String(src.repo_key).replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '-' + String(src.version).replace(/[^a-z0-9.]+/gi, '-').toLowerCase();\n\nconst newState = { ...src.full_state, [src.repo_key]: src.version };\n\nreturn { json: {\n  filename,\n  filePath: 'src/content/tutorials/' + filename,\n  fileContentBase64: Buffer.from(fullContent, 'utf-8').toString('base64'),\n  branch: branchSlug,\n  prTitle: 'New post: ' + title,\n  prBody: 'Auto-drafted by the Ansible release watch workflow.\\n\\nRepo/package: `' + src.repo_key + '`\\nNew version: `' + src.version + '` (previous: `' + (src.previous_version || 'none') + '`)\\nRelease: ' + src.url + '\\n\\n**Review before merging:**\\n- [ ] fact-check the drafted content against the real release notes\\n- [ ] add a thumbnail (falls back to the default one otherwise)\\n- [ ] adjust tone/length as needed',\n  stateJsonBase64: Buffer.from(JSON.stringify(newState, null, 2), 'utf-8').toString('base64'),\n  state_sha: src.state_sha,\n} };"
+        "jsCode": "// runOnceForEachItem - this runs once PER changed target (ansible/ansible,\n// the pypi community package, or any of the tracked collections), not once\n// for the whole batch. It used to default to \"run once for all items\" with\n// $json / .first(), which silently collapsed every run down to just the\n// first changed item and dropped the rest.\nconst src = $('Determine new versions').item.json;\nconst response = $json;\n\nfunction getText(resp) {\n  if (!resp) return '';\n  // OpenAI-compatible shape (served by claude-bridge, not Anthropic's own API).\n  return resp.choices?.[0]?.message?.content || '';\n}\n\nconst text = getText(response);\nif (!text) throw new Error('Claude returned no text: ' + (response?.error?.message || JSON.stringify(response).slice(0, 2000)));\nconst cleaned = text.trim().replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '').trim();\nconst jsonStart = cleaned.indexOf('{');\nconst jsonEnd = cleaned.lastIndexOf('}');\n\n// Claude's JSON often contains real (unescaped) newlines/tabs inside string\n// values - e.g. a fenced code block or a paragraph break inside\n// body_markdown - which is invalid per strict JSON (control characters must\n// be escaped) even though it looks fine to a human. Walk the text tracking\n// whether we're inside a quoted string (respecting backslash-escapes) and\n// only escape control characters found there - untouched outside strings, so\n// real JSON structural whitespace is unaffected.\nfunction sanitizeJsonControlChars(str) {\n  let inString = false;\n  let escapedNext = false;\n  let out = '';\n  for (let i = 0; i < str.length; i++) {\n    const ch = str[i];\n    if (!inString) {\n      if (ch === '\"') inString = true;\n      out += ch;\n      continue;\n    }\n    if (escapedNext) {\n      out += ch;\n      escapedNext = false;\n      continue;\n    }\n    if (ch === '\\\\') {\n      out += ch;\n      escapedNext = true;\n    } else if (ch === '\"') {\n      out += ch;\n      inString = false;\n    } else if (ch === '\\n') {\n      out += '\\\\n';\n    } else if (ch === '\\r') {\n      out += '\\\\r';\n    } else if (ch === '\\t') {\n      out += '\\\\t';\n    } else {\n      out += ch;\n    }\n  }\n  return out;\n}\n\nconst draft = JSON.parse(sanitizeJsonControlChars(cleaned.slice(jsonStart, jsonEnd + 1)));\n\nconst today = new Date().toISOString().slice(0, 10);\nconst title = String(draft.title || (src.release_name + ' Released')).trim();\nconst filename = title.replace(/[\\\\/:*?\"<>|]/g, '') + '.md';\n\nconst frontmatter = [\n  '---',\n  'title: \"' + title.replace(/\"/g, '\\\\\"') + '\"',\n  'description: \"' + String(draft.description || '').replace(/\"/g, '\\\\\"') + '\"',\n  'author: \"Luca Berton\"',\n  'date: \"' + today + '\"',\n  'category: \"' + (['playbooks', 'modules', 'roles', 'inventory', 'troubleshooting', 'cloud', 'cloud-virtualization', 'security', 'networking', 'network', 'containers', 'windows', 'testing', 'basics', 'fundamentals', 'advanced', 'enterprise', 'collections', 'community', 'best-practices', 'getting-started', 'interviews', 'tools', 'news'].includes(draft.category) ? draft.category : 'news') + '\"',\n  'tags:',\n  ...(draft.tags || ['ansible', 'release']).map(t => '  - \"' + String(t).replace(/\"/g, '\\\\\"') + '\"'),\n  '---',\n].join('\\n');\n\nconst body = '# ' + title + '\\n\\n' + String(draft.body_markdown || '');\nconst fullContent = frontmatter + '\\n\\n' + body;\n\nconst branchSlug = 'ansible-release-' + String(src.repo_key).replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '-' + String(src.version).replace(/[^a-z0-9.]+/gi, '-').toLowerCase();\n\nreturn { json: {\n  filename,\n  filePath: 'src/content/tutorials/' + filename,\n  fileContentBase64: Buffer.from(fullContent, 'utf-8').toString('base64'),\n  branch: branchSlug,\n  prTitle: 'New post: ' + title,\n  prBody: 'Auto-drafted by the Ansible release watch workflow.\\n\\nRepo/package: `' + src.repo_key + '`\\nNew version: `' + src.version + '` (previous: `' + (src.previous_version || 'none') + '`)\\nRelease: ' + src.url + '\\n\\n**Review before merging:**\\n- [ ] fact-check the drafted content against the real release notes\\n- [ ] add a thumbnail (falls back to the default one otherwise)\\n- [ ] adjust tone/length as needed',\n  repo_key: src.repo_key,\n  version: src.version,\n  full_state: src.full_state,\n  state_sha: src.state_sha,\n} };"
       },
       "id": "f1000000-0000-0000-0000-000000000009",
       "name": "Build post + branch",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1360,
-        608
+        2400,
+        560
       ]
     },
     {
@@ -276,8 +254,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1584,
-        608
+        2640,
+        560
       ]
     },
     {
@@ -309,8 +287,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1808,
-        608
+        2880,
+        560
       ],
       "onError": "continueRegularOutput",
       "notes": "Se il branch esiste gia' (es. un rerun) GitHub risponde 422 - si continua comunque, il file verra' scritto/aggiornato su quel branch."
@@ -344,8 +322,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        2032,
-        608
+        3120,
+        560
       ],
       "notes": "src/content/tutorials/ - path costruito a pezzi ed encodeURIComponent-ato per gestire spazi/caratteri speciali nel titolo, come nei file esistenti del repo."
     },
@@ -378,8 +356,21 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        2240,
-        608
+        3360,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Default mode (runOnceForAllItems) - deliberately NOT per-item. Each changed\n// target's own item carries the SAME full_state snapshot (read once, before\n// any of them were processed) plus state_sha from that one read. Merging\n// once here, after every branch/PR for this run has been created, means one\n// single PUT to state.json with every version bump from this run applied\n// together - instead of N separate per-item PUTs racing on the same file\n// SHA (whichever wrote last would win and silently drop every other item's\n// update). Only matters once more than one target can plausibly change on\n// the same day, which is exactly what adding the collection list makes\n// likely.\nconst items = $('Build post + branch').all().map(i => i.json);\nif (items.length === 0) return [];\n\nconst merged = { ...(items[0].full_state || {}) };\nfor (const it of items) {\n  merged[it.repo_key] = it.version;\n}\n\nreturn [{\n  json: {\n    stateJsonBase64: Buffer.from(JSON.stringify(merged, null, 2), 'utf-8').toString('base64'),\n    state_sha: items[0].state_sha,\n  },\n}];"
+      },
+      "id": "f1000000-0000-0000-0000-000000000024",
+      "name": "Merge state updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3600,
+        560
       ]
     },
     {
@@ -401,7 +392,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify(Object.assign({ message: 'chore: update ansible-release-watch state', content: $('Build post + branch').item.json.stateJsonBase64, branch: 'main' }, $('Build post + branch').item.json.state_sha ? { sha: $('Build post + branch').item.json.state_sha } : {})) }}",
+        "jsonBody": "={{ JSON.stringify(Object.assign({ message: 'chore: update ansible-release-watch state', content: $json.stateJsonBase64, branch: 'main' }, $json.state_sha ? { sha: $json.state_sha } : {})) }}",
         "options": {
           "timeout": 30000
         }
@@ -411,38 +402,24 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        2464,
-        608
+        3840,
+        560
       ],
-      "notes": "Unico commit diretto su main - non e' contenuto del blog, e' solo il ledger dell'automazione (cosi' non ripropone la stessa versione ogni giorno mentre la PR e' ancora in review)."
+      "notes": "Unico commit diretto su main - non e' contenuto del blog, e' solo il ledger dell'automazione. Un solo PUT per l'intero run (vedi 'Merge state updates') anche quando piu' di un target e' cambiato lo stesso giorno."
     },
     {
       "parameters": {
-        "content": "## Ansible release watch -> blog PR — SETUP\n\n**Cosa traccia (verificato prima di scrivere il workflow):**\n- `ansible/ansible` su GitHub (e' il sorgente di ansible-core - `ansible/ansible-core` NON esiste come repo separato)\n- pacchetto `ansible` su PyPI (11.x/12.x/13.x/14.x - non ha GitHub Releases, PyPI e' l'unica fonte affidabile)\n\n**Variabili d'ambiente (VPS/container n8n):**\n- `GITHUB_TOKEN` — Personal Access Token con permesso `repo` su `lucab85/ansiblebyexample.com` (branch, file, pull request)\n\n**Nel nodo 'Claude - draft post':**\n- sostituisci `YOUR_ANTHROPIC_API_KEY`\n\n**Stato:** salvato in `automation/ansible-release-watch/state.json` DENTRO il repo del blog stesso — nessun Google Sheet o DB esterno. Il primo giro (file non esiste) crea sia il file di stato che, se una versione risulta \"nuova\", una PR.\n\n**Flusso:** ogni versione cambiata genera UN branch + UNA PR separata con un post bozza scritto da Claude nello stile esatto degli articoli esistenti del blog (frontmatter YAML incluso). Il contenuto NON viene mai mergiato automaticamente — lo rivedi e fai merge tu. Solo l'aggiornamento del file di stato va dritto su `main` (non e' contenuto, e' solo il registro di cosa e' gia' stato processato).\n\n**Non testato end-to-end contro il repo vero** (avrebbe significato aprire branch/PR reali sul tuo blog senza permesso) — la struttura e' stata validata importandola in n8n, e ogni endpoint GitHub/PyPI usato e' stato verificato manualmente con curl prima di scrivere il nodo. Testalo con **Manual Test** su un repo di prova prima di puntarlo al vero `ansiblebyexample.com`, o quantomeno guarda con attenzione la prima PR che apre.\n\n**Espansione ai repo satellite (collection):** aggiungi altre coppie 'HTTP Request -> Combine current versions' per ogni `ansible-collections/<nome>` che vuoi seguire (quelle usano GitHub Releases normalmente, come `ansible/ansible`) — la logica di confronto/stato/PR sotto non cambia.",
-        "height": 560,
-        "width": 1100
+        "content": "## Ansible release watch -> blog PR \u2014 SETUP\n\n**Cosa traccia:**\n- `ansible/ansible` su GitHub (e' il sorgente di ansible-core - `ansible/ansible-core` NON esiste come repo separato)\n- pacchetto `ansible` su PyPI (11.x/12.x/13.x/14.x - non ha GitHub Releases, PyPI e' l'unica fonte affidabile)\n- 13 collection tra le piu' usate (vedi il nodo 'Target list' per l'elenco esatto e i commenti su tagPrefix)\n\n**Come vengono controllate le versioni (nodo 'Get latest version'):**\n- ansible-core: GitHub Releases API\n- pacchetto community: PyPI JSON API\n- ogni collection: Ansible Galaxy API (non GitHub Releases - un paio di collection, es. kubernetes.core, taggano su GitHub senza creare un oggetto Release, quindi /releases/latest darebbe 404 anche se la collection e' pubblicata normalmente; Galaxy funziona in modo uniforme per tutte)\n\n**Variabili d'ambiente (VPS/container n8n):**\n- `GITHUB_TOKEN` \u2014 Personal Access Token con permesso `repo` su `lucab85/ansiblebyexample.com` (branch, file, pull request) e lettura pubblica su ansible-collections/* e ansible-community/ansible-build-data\n\n**Nel nodo 'Claude - draft post':** usa claude-bridge (nessuna API key da incollare qui).\n\n**Stato:** salvato in `automation/ansible-release-watch/state.json` DENTRO il repo del blog stesso \u2014 nessun Google Sheet o DB esterno. Aggiornato con UN SOLO commit per run (nodo 'Merge state updates' + 'Update state file'), anche quando piu' di un target e' cambiato nello stesso giorno - il vecchio design faceva un PUT per ogni item cambiato, il che avrebbe perso aggiornamenti in caso di piu' di una release lo stesso giorno (ognuno sovrascriveva il file con l'ultimo SHA letto, non con quello dell'item precedente).\n\n**Flusso:** ogni versione cambiata genera UN branch + UNA PR separata con un post bozza scritto da Claude nello stile esatto degli articoli esistenti del blog (frontmatter YAML incluso). Il contenuto NON viene mai mergiato automaticamente \u2014 lo rivedi e fai merge tu.\n\n**Aggiungere un'altra collection:** un'unica riga nell'array `collections` del nodo 'Target list' (`['namespace.name', 'v' o '']`) - nient'altro cambia, ogni nodo dopo e' gia' generico per kind.",
+        "height": 700,
+        "width": 1300
       },
       "id": "f1000000-0000-0000-0000-00000000000f",
       "name": "SETUP",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        816,
-        -80
-      ]
-    },
-    {
-      "parameters": {
-        "mode": "append",
-        "numberInputs": 2
-      },
-      "id": "f1000000-0000-0000-0000-00000000001a",
-      "name": "Merge versions",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3.2,
-      "position": [
-        700,
-        550
+        480,
+        -260
       ]
     }
   ],
@@ -451,12 +428,7 @@
       "main": [
         [
           {
-            "node": "GitHub - ansible/ansible latest",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "PyPI - ansible package",
+            "node": "Target list",
             "type": "main",
             "index": 0
           }
@@ -467,19 +439,36 @@
       "main": [
         [
           {
-            "node": "GitHub - ansible/ansible latest",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "PyPI - ansible package",
+            "node": "Target list",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "GitHub - ansible/ansible latest": {
+    "Target list": {
+      "main": [
+        [
+          {
+            "node": "Get latest version",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get latest version": {
+      "main": [
+        [
+          {
+            "node": "Normalize version",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize version": {
       "main": [
         [
           {
@@ -494,31 +483,9 @@
       "main": [
         [
           {
-            "node": "Merge versions",
+            "node": "Combine current versions",
             "type": "main",
             "index": 0
-          }
-        ]
-      ]
-    },
-    "PyPI - ansible package": {
-      "main": [
-        [
-          {
-            "node": "Get community changelog",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get community changelog": {
-      "main": [
-        [
-          {
-            "node": "Merge versions",
-            "type": "main",
-            "index": 1
           }
         ]
       ]
@@ -615,18 +582,18 @@
       "main": [
         [
           {
-            "node": "Update state file",
+            "node": "Merge state updates",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Merge versions": {
+    "Merge state updates": {
       "main": [
         [
           {
-            "node": "Combine current versions",
+            "node": "Update state file",
             "type": "main",
             "index": 0
           }
